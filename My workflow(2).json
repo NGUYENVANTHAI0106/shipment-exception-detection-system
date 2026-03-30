@@ -1,0 +1,392 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "522cd507-cba6-4cc2-b365-d8ec3ff84b67",
+              "leftValue": "={{ $json.exception }}",
+              "rightValue": "delay",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        368,
+        -208
+      ],
+      "id": "4c7f7ccc-1e18-43e1-a32e-f597cf1bd9b6",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M",
+          "mode": "list",
+          "cachedResultName": "shipment_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Trang tính1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        96,
+        -224
+      ],
+      "id": "e4102b16-de37-470c-a53e-1ccf430c1148",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bMkqAwTaEVjE20bD",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "nguyenvanthai0103@gmail.com",
+        "toEmail": "hoannh.23ite@vku.udn.vn",
+        "subject": "Shipment Delay Alert",
+        "html": "=<h2>📊 Shipment Dashboard</h2>\n\n<p><b>Total Shipments:</b> {{$json.total_shipments}}</p>\n<p><b>Delayed Shipments:</b> {{$json.delayed_shipments}}</p>\n\n<h3>📌 Reasons:</h3>\n<ul>\n{{ Object.entries($json.reasons).map(([k,v]) => `\n  <li>${k}: ${v}</li>\n`).join(\"\") }}\n</ul>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        944,
+        -496
+      ],
+      "id": "e7ae74fc-2740-4435-af3c-af5e8d700242",
+      "name": "Send an Email",
+      "webhookId": "42fb514e-ce39-417c-b23f-af08a7e758a5",
+      "credentials": {
+        "smtp": {
+          "id": "5sESMetgwGlicR4J",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        -320
+      ],
+      "id": "4f42ee64-69c8-42c4-8003-f264dd8bb3c6",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "includeTime": false,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dateTime",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -448
+      ],
+      "id": "02e430ae-b519-4adc-b2bd-e17259c37a31",
+      "name": "Date & Time"
+    },
+    {
+      "parameters": {
+        "jsCode": "return Array.from({ length: 20 }).map((_, i) => {\n  const expected = new Date(\"2026-03-01\");\n  const today = new Date(\"2026-03-20\");\n\n  const delay_days = Math.ceil((today - expected) / (1000 * 60 * 60 * 24));\n\n  let exception = \"none\";\n  let reason = \"on time\";\n\n  if (delay_days > 0) {\n    exception = \"delay\";\n\n    // 👇 phân loại lý do\n    if (delay_days >= 10) {\n      reason = \"Weather issue\";\n    } else if (delay_days >= 5) {\n      reason = \"Transportation delay\";\n    } else {\n      reason = \"Minor delay\";\n    }\n  }\n\n  return {\n    json: {\n      shipment_id: \"S\" + (1000 + i),\n      status: \"In Transit\",\n      expected_date: \"2026-03-01\",\n      current_date: \"2026-03-20\",\n      delay_days: delay_days,\n      exception: exception,\n      reason: reason\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        -464
+      ],
+      "id": "05b6a96f-6a40-4ea2-8b9d-7e7a1ec5773b",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M",
+          "mode": "list",
+          "cachedResultName": "shipment_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Trang tính1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "shipment_id": "={{ $json.shipment_id }} ✅",
+            "delay-days": "={{ $json.delay_days }}",
+            "exception": "={{ $json.exception }}"
+          },
+          "matchingColumns": [
+            "shipment_id"
+          ],
+          "schema": [
+            {
+              "id": "shipment_id",
+              "displayName": "shipment_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "expected_date",
+              "displayName": "expected_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "current_date",
+              "displayName": "current_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "delay-days",
+              "displayName": "delay-days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "exception",
+              "displayName": "exception",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        560,
+        -544
+      ],
+      "id": "8df2e7bb-dd60-404f-b630-f38b936378fd",
+      "name": "Update row in sheet",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bMkqAwTaEVjE20bD",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        592,
+        -320
+      ],
+      "id": "e240ba9b-9907-497e-a7b4-8fcd4b827a8c",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $json.data;\n\n// tổng shipment\nconst total = items.length;\n\n// đếm delay\nlet delayed = 0;\n\n// đếm theo lý do\nconst reasonCount = {};\n\nitems.forEach(item => {\n  if (item.exception === \"delay\") {\n    delayed++;\n\n    if (!reasonCount[item.reason]) {\n      reasonCount[item.reason] = 0;\n    }\n\n    reasonCount[item.reason]++;\n  }\n});\n\nreturn [\n  {\n    json: {\n      total_shipments: total,\n      delayed_shipments: delayed,\n      reasons: reasonCount\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        -416
+      ],
+      "id": "3332ba0e-799f-45db-adf5-19c9edea84d0",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Date & Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Date & Time": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send an Email": {
+      "main": [
+        []
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Send an Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "0710bd1b-30f9-47a3-a642-95393d1ecd67",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f9057be9d10aeed069fb8d03b6c0883260f71f1482be8d2c1b7183e0df167852"
+  },
+  "id": "XUB1sRmppxTmvCwR",
+  "tags": []
+}
