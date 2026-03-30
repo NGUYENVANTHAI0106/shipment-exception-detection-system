@@ -1,0 +1,191 @@
+{
+  "name": "My workflow 4",
+  "nodes": [
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M",
+          "mode": "list",
+          "cachedResultName": "shipment_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Trang tính1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        0
+      ],
+      "id": "06528366-e33e-4c01-b162-7367276d5c57",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Xr5G10uJaBixiFHr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let result = {\n  delay: 0,\n  normal: 0\n};\n\nitems.forEach(item => {\n  const exception = item.json.exception;\n\n  if (exception === \"delay\") result.delay++;\n  else result.normal++;\n});\n\nreturn [\n  {\n    json: {\n      date: new Date().toLocaleString(),\n      delay: result.delay,\n      normal: result.normal\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "8d6e0dc2-4515-4c1d-933f-1c11b87dc058",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8a987139-0fea-4317-b9c7-0d10b222d792",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M",
+          "mode": "list",
+          "cachedResultName": "shipment_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 754776351,
+          "mode": "list",
+          "cachedResultName": "Dashboard",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14J5GSNpWS6AtA4MgkfTdHGYJxdlMQAivDH5tTxWCE3M/edit#gid=754776351"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{$json[\"date\"]}}",
+            "Delay": "={{$json[\"delay\"]}}",
+            "Normal": "={{$json[\"normal\"]}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Delay",
+              "displayName": "Delay",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Normal",
+              "displayName": "Normal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        624,
+        0
+      ],
+      "id": "0f86c9f4-bdb9-4a87-b745-a95fdfb6e2a5",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Xr5G10uJaBixiFHr",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "634dd56e-324d-4ca1-8901-2053f16f2edc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f73bc0d98e6621473479fa3f6cc1d420584feb0ea5f21a108d64395901dcb67f"
+  },
+  "id": "SnWha2W82UtOUcX2",
+  "tags": []
+}
