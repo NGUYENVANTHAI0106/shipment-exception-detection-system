@@ -1,0 +1,286 @@
+{
+  "name": "My workflow 3",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -432,
+        -80
+      ],
+      "id": "cd30f2fa-2832-4575-ab6c-b6bca52e7949",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/.n8n-files/shipment_tracking_test_100.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -224,
+        -80
+      ],
+      "id": "4491a7a5-0cdf-4f19-a453-c9c5438d7ca1",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "options": {
+          "delimiter": ",",
+          "headerRow": true
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        -80
+      ],
+      "id": "3819e354-0382-41b1-b2a0-4b29981cb3c1",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f91839a3-7617-471c-9185-78a6eb8999ca",
+              "name": "order_id",
+              "value": "={{$json.order_id}}",
+              "type": "string"
+            },
+            {
+              "id": "f3de1e0c-3f31-463c-b9a4-653602b22285",
+              "name": "tracking_number",
+              "value": "={{$json.tracking_number}}",
+              "type": "string"
+            },
+            {
+              "id": "5c6a54fa-73b7-4d3d-a15b-7d6e4db98771",
+              "name": "carrier",
+              "value": "={{$json.carrier}}",
+              "type": "string"
+            },
+            {
+              "id": "5566303a-e091-4e2b-9970-acdcecc19883",
+              "name": "carrier_status",
+              "value": "={{$json.carrier_status}}",
+              "type": "string"
+            },
+            {
+              "id": "77a9a94f-c8b2-4683-93d6-2348e439e5c5",
+              "name": "event_time",
+              "value": "={{$json.event_time.replace('T', ' ').replace('Z', '')}}",
+              "type": "string"
+            },
+            {
+              "id": "7b60091c-6b7b-4c75-ab55-8087112c9188",
+              "name": "location",
+              "value": "={{$json.location}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        192,
+        -80
+      ],
+      "id": "0c31d033-becb-45fd-acbf-aebc0f1cc2aa",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bfc4878b-ecb7-4af8-b1f7-a03e556bf145",
+              "leftValue": "={{$json.order_id}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "a7ffe01a-7939-4f7f-a591-d05c2d7f1d18",
+              "leftValue": "={{$json.tracking_number}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "f8e3a8e9-67a7-454e-be06-28395a3347b3",
+              "leftValue": "={{$json.carrier}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "6a2d4102-ff52-43d6-97e6-4dfbc251c65a",
+              "leftValue": "={{$json.carrier_status}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "57d0fd32-2e7e-4fda-a357-0d21d2923ce5",
+              "leftValue": "={{$json.event_time}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "57d985f2-fcf4-4c01-a78c-3d641ae4d4d1",
+              "leftValue": "={{$json.location}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        400,
+        -80
+      ],
+      "id": "2281d2b6-b052-4a0b-939c-0e47bd1c5311",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "table": {
+          "__rl": true,
+          "value": "tracking_normalized",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        608,
+        -176
+      ],
+      "id": "863f8999-b4e2-4eba-bffb-7a0294a4fda8",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "mySql": {
+          "id": "z6UAjynKWPD7uq6K",
+          "name": "MySQL account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b213536d-8c3f-4f3b-8dcd-77c0085dbbe9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fd266ff627be41594cfad54b10abbff1753607daf83f5335d4ca7445ffb4177c"
+  },
+  "id": "f7cKLOeQcgXOc1He",
+  "tags": []
+}
