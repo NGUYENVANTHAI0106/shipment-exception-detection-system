@@ -62,6 +62,7 @@ services:
       context: ./frontend
     environment:
       - NEXT_PUBLIC_API_BASE=/api
+      - API_INTERNAL_BASE=http://api:8000/api
     ports:
       - "3000:3000"
 

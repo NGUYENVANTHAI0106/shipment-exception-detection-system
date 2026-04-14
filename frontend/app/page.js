@@ -1,7 +1,20 @@
+import { headers } from "next/headers";
+
 async function fetchHealth() {
   const base = process.env.NEXT_PUBLIC_API_BASE || "/api";
+  const internalBase = process.env.API_INTERNAL_BASE; // e.g. http://api:8000/api when running in Docker
   try {
-    const res = await fetch(`${base}/health`, { cache: "no-store" });
+    if (internalBase) {
+      const res = await fetch(`${internalBase}/health`, { cache: "no-store" });
+      return await res.json();
+    }
+
+    const h = await headers();
+    const host = h.get("x-forwarded-host") || h.get("host");
+    const proto = h.get("x-forwarded-proto") || "http";
+
+    const url = base.startsWith("/") ? `${proto}://${host}${base}/health` : `${base}/health`;
+    const res = await fetch(url, { cache: "no-store" });
     return await res.json();
   } catch {
     return { ok: false };

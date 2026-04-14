@@ -1,2 +1,2 @@
-__all__ = ["auth", "shipments", "exceptions", "rules", "deps"]
+__all__ = ["auth", "shipments", "exceptions", "rules", "admin", "deps"]
 

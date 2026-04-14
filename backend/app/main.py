@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from sqlalchemy.orm import Session
 
-from app.api import auth, exceptions, rules, shipments
+from app.api import admin, auth, exceptions, rules, shipments
 from app.config import settings
 from app.database import SessionLocal
 from app.seed import seed
@@ -21,6 +21,7 @@ app.include_router(auth.router)
 app.include_router(shipments.router)
 app.include_router(exceptions.router)
 app.include_router(rules.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health")

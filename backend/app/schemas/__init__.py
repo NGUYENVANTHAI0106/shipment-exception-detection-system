@@ -1,2 +1,2 @@
-__all__ = ["auth", "shipment", "exception", "rule"]
+__all__ = ["auth", "shipment", "exception", "rule", "user"]
 

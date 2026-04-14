@@ -1,30 +1,40 @@
-# Shipment Exception Detection System (Day 1)
+# Shipment Exception Detection System
 
-## Chạy nhanh (Docker)
+Hệ thống phát hiện shipment exceptions gồm:
+
+- **Backend**: FastAPI (`/api/*`)
+- **Frontend**: Next.js (Client + Admin)
+- **Orchestrator**: n8n (`/n8n/*`)
+- **Infra**: nginx reverse proxy, Postgres, Redis
+
+## Chạy dự án bằng Docker (khuyến nghị)
 
 Nếu máy bạn có Docker daemon + Compose:
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
-Sau đó mở:
+Sau khi chạy xong, truy cập (mặc định nginx publish ra cổng **8080**):
 
-- API health: `http://localhost:8080/api/health`
-- Swagger: `http://localhost:8080/api/docs`
-- Frontend: `http://localhost:8080/`
-- n8n: `http://localhost:8080/n8n/`
+- **Client portal**: `http://localhost:8080/`
+- **Admin dashboard**: `http://localhost:8080/admin`
+- **API health**: `http://localhost:8080/api/health`
+- **Swagger (API docs)**: `http://localhost:8080/api/docs`
+- **n8n UI**: `http://localhost:8080/n8n/`
 
-Nếu bạn bị lỗi cổng `5678` (n8n) đã bị chiếm, chạy với cổng host khác:
+### Đổi cổng nếu bị trùng port
+
+- **Đổi cổng nginx (mặc định 8080)**:
 
 ```bash
-N8N_HOST_PORT=5679 docker-compose up --build
+NGINX_HOST_PORT=8080 docker compose up --build
 ```
 
-Nếu bạn bị lỗi cổng `80` (nginx) đã bị chiếm, đổi cổng host của nginx (mặc định đã là `8080`):
+- **Đổi cổng n8n publish ra host (mặc định 5679 → container 5678)**:
 
 ```bash
-NGINX_HOST_PORT=8080 docker-compose up --build
+N8N_HOST_PORT=5679 docker compose up --build
 ```
 
 ## Tài khoản seed (dev)
@@ -33,6 +43,20 @@ Khi `APP_SEED_ON_STARTUP=1` (mặc định trong `docker-compose.yml`), hệ th�
 
 - Admin: `admin@local.test` / `Admin123!`
 - Client: `client@local.test` / `Client123!`
+
+## Tắt / dừng Docker
+
+- **Dừng containers (giữ data volumes)**:
+
+```bash
+docker compose down
+```
+
+- **Dừng và xoá luôn volumes (xoá DB data / redis / n8n data)**:
+
+```bash
+docker compose down -v
+```
 
 ## Test nhanh trên Swagger
 
@@ -52,4 +76,10 @@ Trong thư mục `n8n/workflows/` đã có 3 workflow JSON mẫu để import:
 - `notification-router.json`: Webhook `/exception-notify` (placeholder)
 
 Import trong n8n UI: `http://localhost:8080/n8n/` → **Workflows** → **Import from File**.
+
+## Ghi chú routing (nginx)
+
+- `/` và `/admin` → Next.js frontend
+- `/api/*` → FastAPI backend
+- `/n8n/*` → n8n
 
