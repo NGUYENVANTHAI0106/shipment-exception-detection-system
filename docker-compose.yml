@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shipment
+      POSTGRES_USER: shipment
+      POSTGRES_PASSWORD: shipment
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shipment -d shipment"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: dev
+      APP_DB_URL: postgresql+psycopg://shipment:shipment@postgres:5432/shipment
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_JWT_SECRET: dev-secret-change-me
+      APP_JWT_ALG: HS256
+      APP_ACCESS_TOKEN_EXPIRE_MINUTES: "480"
+      APP_SEED_ON_STARTUP: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_PATH=/n8n/
+      - WEBHOOK_URL=http://localhost/n8n/
+      - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "${N8N_HOST_PORT:-5679}:5678"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      - NEXT_PUBLIC_API_BASE=/api
+    ports:
+      - "3000:3000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+      - frontend
+      - n8n
+    ports:
+      - "${NGINX_HOST_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  pgdata:
+  redisdata:
+  n8n_data:

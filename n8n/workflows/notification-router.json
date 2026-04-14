@@ -1,0 +1,56 @@
+{
+  "name": "Notification Router (placeholder)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "exception-notify",
+        "httpMethod": "POST",
+        "options": {}
+      },
+      "id": "Webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "message",
+              "value": "={{`Exception received: ${JSON.stringify($json).slice(0, 500)}`}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "Set",
+      "name": "Build Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
+
