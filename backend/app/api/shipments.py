@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import desc, select
+from sqlalchemy import asc, desc, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
@@ -39,6 +39,10 @@ def _to_response(s: Shipment) -> ShipmentResponse:
 @router.get("/", response_model=list[ShipmentResponse])
 def list_shipments(
     q: str | None = None,
+    status: str | None = None,
+    carrier: str | None = None,
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -47,7 +51,24 @@ def list_shipments(
     stmt = select(Shipment).where(Shipment.user_id == user.id)
     if q:
         stmt = stmt.where(Shipment.tracking_number.ilike(f"%{q}%"))
-    shipments = db.execute(stmt.order_by(desc(Shipment.created_at)).limit(limit).offset(offset)).scalars().all()
+    if status:
+        stmt = stmt.where(Shipment.status == status)
+    if carrier:
+        stmt = stmt.where(Shipment.carrier == carrier)
+
+    sort_map = {
+        "created_at": Shipment.created_at,
+        "updated_at": Shipment.updated_at,
+        "estimated_delivery": Shipment.estimated_delivery,
+        "tracking_number": Shipment.tracking_number,
+        "carrier": Shipment.carrier,
+        "status": Shipment.status,
+    }
+    sort_col = sort_map.get(sort_by, Shipment.created_at)
+    order_fn = desc if sort_dir.lower() != "asc" else asc
+    stmt = stmt.order_by(order_fn(sort_col))
+
+    shipments = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
     return [_to_response(s) for s in shipments]
 
 

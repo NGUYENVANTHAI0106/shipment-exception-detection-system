@@ -5,13 +5,13 @@ todos:
   # === DEV-A: Backend + Infrastructure ===
   - id: A-day1-infra-compose
     content: "[DEV-A] Ngày 1: Infra - docker-compose + network/volumes + profile dev (stack up được)"
-    status: pending
+    status: completed
   - id: A-day1-infra-nginx
     content: "[DEV-A] Ngày 1: Infra - nginx routes (/api, /n8n, /, /admin) + basic healthcheck"
-    status: pending
+    status: completed
   - id: A-day1-infra-env
     content: "[DEV-A] Ngày 1: Infra - `.env.example` + env validation + seed toggle + runbook ngắn"
-    status: pending
+    status: completed
   - id: A-day1-db-schema
     content: "[DEV-A] Ngày 1: DB - models + enums chuẩn hoá + Alembic migration v1"
     status: pending

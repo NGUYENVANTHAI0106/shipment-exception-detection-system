@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, func, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
@@ -55,12 +55,27 @@ def _exception_to_response(e: ExceptionRecord) -> ExceptionResponse:
 
 @router.get("/users", response_model=list[AdminUserResponse])
 def list_users(
+    q: str | None = None,
+    role: str | None = None,
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> list[AdminUserResponse]:
-    rows = db.execute(select(User).order_by(desc(User.created_at)).limit(limit).offset(offset)).scalars().all()
+    stmt = select(User)
+    if q:
+        stmt = stmt.where(User.email.ilike(f"%{q}%"))
+    if role:
+        stmt = stmt.where(User.role == role)
+
+    sort_map = {"created_at": User.created_at, "email": User.email, "role": User.role, "id": User.id}
+    sort_col = sort_map.get(sort_by, User.created_at)
+    order_fn = desc if sort_dir.lower() != "asc" else asc
+    stmt = stmt.order_by(order_fn(sort_col)).limit(limit).offset(offset)
+
+    rows = db.execute(stmt).scalars().all()
     return [
         AdminUserResponse(
             id=u.id,
@@ -99,27 +114,79 @@ def update_user(
 
 @router.get("/shipments", response_model=list[ShipmentResponse])
 def list_all_shipments(
+    q: str | None = None,
+    status: str | None = None,
+    carrier: str | None = None,
+    user_id: int | None = None,
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> list[ShipmentResponse]:
-    rows = db.execute(select(Shipment).order_by(desc(Shipment.created_at)).limit(limit).offset(offset)).scalars().all()
+    stmt = select(Shipment)
+    if q:
+        stmt = stmt.where(Shipment.tracking_number.ilike(f"%{q}%"))
+    if status:
+        stmt = stmt.where(Shipment.status == status)
+    if carrier:
+        stmt = stmt.where(Shipment.carrier == carrier)
+    if user_id is not None:
+        stmt = stmt.where(Shipment.user_id == user_id)
+
+    sort_map = {
+        "created_at": Shipment.created_at,
+        "updated_at": Shipment.updated_at,
+        "estimated_delivery": Shipment.estimated_delivery,
+        "tracking_number": Shipment.tracking_number,
+        "carrier": Shipment.carrier,
+        "status": Shipment.status,
+        "id": Shipment.id,
+    }
+    sort_col = sort_map.get(sort_by, Shipment.created_at)
+    order_fn = desc if sort_dir.lower() != "asc" else asc
+    stmt = stmt.order_by(order_fn(sort_col)).limit(limit).offset(offset)
+
+    rows = db.execute(stmt).scalars().all()
     return [_shipment_to_response(s) for s in rows]
 
 
 @router.get("/exceptions", response_model=list[ExceptionResponse])
 def list_all_exceptions(
+    type: str | None = None,
+    severity: str | None = None,
+    status: str | None = None,
+    shipment_id: int | None = None,
+    sort_by: str = Query(default="detected_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> list[ExceptionResponse]:
-    rows = (
-        db.execute(select(ExceptionRecord).order_by(desc(ExceptionRecord.detected_at)).limit(limit).offset(offset))
-        .scalars()
-        .all()
-    )
+    stmt = select(ExceptionRecord)
+    if type:
+        stmt = stmt.where(ExceptionRecord.type == type)
+    if severity:
+        stmt = stmt.where(ExceptionRecord.severity == severity)
+    if status:
+        stmt = stmt.where(ExceptionRecord.status == status)
+    if shipment_id is not None:
+        stmt = stmt.where(ExceptionRecord.shipment_id == shipment_id)
+
+    sort_map = {
+        "detected_at": ExceptionRecord.detected_at,
+        "severity": ExceptionRecord.severity,
+        "type": ExceptionRecord.type,
+        "status": ExceptionRecord.status,
+        "id": ExceptionRecord.id,
+    }
+    sort_col = sort_map.get(sort_by, ExceptionRecord.detected_at)
+    order_fn = desc if sort_dir.lower() != "asc" else asc
+    stmt = stmt.order_by(order_fn(sort_col)).limit(limit).offset(offset)
+
+    rows = db.execute(stmt).scalars().all()
     return [_exception_to_response(e) for e in rows]
 
 
