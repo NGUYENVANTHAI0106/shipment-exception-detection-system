@@ -11,6 +11,14 @@ Hệ thống phát hiện shipment exceptions gồm:
 
 Nếu máy bạn có Docker daemon + Compose:
 
+1. Tạo file env:
+
+```bash
+cp .env.example .env
+```
+
+2. Chạy stack:
+
 ```bash
 docker compose up --build
 ```
@@ -57,6 +65,15 @@ docker compose down
 ```bash
 docker compose down -v
 ```
+
+## Runbook nhanh (Day 1 - DEV-A)
+
+- **Healthcheck nhanh**:
+  - `GET /api/health` → `http://localhost:8080/api/health`
+- **Reset data demo** (xoá DB + redis + n8n):
+  - `docker compose down -v` rồi `docker compose up --build`
+- **Seed data**:
+  - bật/tắt bằng `APP_SEED_ON_STARTUP=1|0` trong `.env`
 
 ## Test nhanh trên Swagger
 
