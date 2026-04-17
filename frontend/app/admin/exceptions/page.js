@@ -1,9 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import AdminNav from "../AdminNav";
-import { apiFetch } from "../../lib/api";
-import { useRequireAuth } from "../../lib/authGuard";
+import { apiFetch } from "@/app/lib/api";
+import { formatDateTime, formatNumber, humanizeToken } from "@/app/lib/format";
+import { useRequireAuth } from "@/app/lib/authGuard";
+import DataTable from "@/components/shared/DataTable";
+import EmptyState from "@/components/shared/EmptyState";
+import SeverityBadge from "@/components/shared/SeverityBadge";
+import StatCard from "@/components/shared/StatCard";
+import StatusBadge from "@/components/shared/StatusBadge";
+import { StatGridSkeleton, TableSkeleton } from "@/components/shared/Skeletons";
 
 export default function AdminExceptionsPage() {
   const { ready, hasToken } = useRequireAuth();
@@ -20,7 +27,7 @@ export default function AdminExceptionsPage() {
       const data = await apiFetch("/admin/exceptions");
       setRows(data || []);
     } catch (e) {
-      setErr(e.message || "Load failed");
+      setErr(e.message || "Không thể tải dữ liệu");
     } finally {
       setLoading(false);
     }
@@ -32,10 +39,10 @@ export default function AdminExceptionsPage() {
     setLoading(true);
     try {
       await apiFetch(`/exceptions/${id}`, { method: "PATCH", body: { status } });
-      setMsg(`Đã cập nhật exception id=${id} -> ${status}`);
+      setMsg(`Đã cập nhật ngoại lệ #${id} sang trạng thái "${humanizeToken(status)}".`);
       await load();
     } catch (e) {
-      setErr(e.message || "Update failed");
+      setErr(e.message || "Không thể cập nhật trạng thái");
     } finally {
       setLoading(false);
     }
@@ -47,93 +54,156 @@ export default function AdminExceptionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, hasToken]);
 
-  if (!ready) return null;
-  if (!hasToken) {
+  const openCount = rows.filter((row) => row.status === "open").length;
+  const urgentCount = rows.filter((row) => ["high", "critical"].includes(String(row.severity).toLowerCase())).length;
+
+  if (!ready) {
     return (
-      <div className="rounded-xl border bg-white p-4">
-        Bạn chưa login. Vào <a className="underline" href="/login">/login</a>.
+      <div className="page-stack">
+        <StatGridSkeleton count={3} />
+        <TableSkeleton rows={6} columns={7} />
       </div>
     );
   }
 
+  if (!hasToken) {
+    return (
+      <EmptyState
+        eyebrow="Cần đăng nhập"
+        title="Đăng nhập trước khi xử lý ngoại lệ"
+        description="Trang quản trị này yêu cầu token hiện tại để cập nhật trạng thái ngoại lệ trên toàn hệ thống."
+        action={
+          <Link href="/login" className="btn-primary">
+            Đi tới đăng nhập
+          </Link>
+        }
+      />
+    );
+  }
+
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Exceptions (Admin)</h1>
-      <div className="mt-1 text-sm text-slate-600">Quản lý exceptions toàn hệ thống.</div>
+    <div className="page-stack">
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          eyebrow="Toàn hệ thống"
+          label="Tổng ngoại lệ"
+          value={formatNumber(rows.length)}
+          hint="Tất cả bản ghi ngoại lệ mà quản trị viên có thể điều phối trực tiếp từ màn hình này."
+          meta="hàng đợi"
+          tone="accent"
+        />
+        <StatCard
+          eyebrow="Đang xử lý"
+          label="Ngoại lệ đang mở"
+          value={formatNumber(openCount)}
+          hint="Các trường hợp chưa đóng, phù hợp để phân công hoặc cập nhật trạng thái ngay."
+          meta="mở"
+          tone="warning"
+        />
+        <StatCard
+          eyebrow="Ưu tiên"
+          label="Cao và nghiêm trọng"
+          value={formatNumber(urgentCount)}
+          hint="Nhóm ca có mức độ rủi ro cao, nên được ưu tiên trước trong phiên điều hành."
+          meta="cao"
+          tone="success"
+        />
+      </section>
 
-      <AdminNav current="exceptions" />
-
-      <button
-        onClick={load}
-        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-        disabled={loading}
-      >
-        Refresh
-      </button>
-
-      {err ? <div className="mt-3 rounded-lg bg-red-50 p-2 text-sm text-red-700">{err}</div> : null}
-      {msg ? <div className="mt-3 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-700">{msg}</div> : null}
-
-      <div className="mt-4 overflow-auto rounded-xl border bg-white">
-        <table className="min-w-[1100px] w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-600">
-            <tr>
-              <th className="p-3">ID</th>
-              <th className="p-3">Shipment</th>
-              <th className="p-3">Type</th>
-              <th className="p-3">Severity</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Detected</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-t">
-                <td className="p-3 font-mono">{r.id}</td>
-                <td className="p-3 font-mono">{r.shipment_id}</td>
-                <td className="p-3">{r.type}</td>
-                <td className="p-3">{r.severity}</td>
-                <td className="p-3">{r.status}</td>
-                <td className="p-3 text-slate-600">{new Date(r.detected_at).toLocaleString()}</td>
-                <td className="p-3">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      className="rounded-md border px-2 py-1 text-xs"
-                      disabled={loading}
-                      onClick={() => setStatus(r.id, "investigating")}
-                    >
-                      Investigating
-                    </button>
-                    <button
-                      className="rounded-md border px-2 py-1 text-xs"
-                      disabled={loading}
-                      onClick={() => setStatus(r.id, "resolved")}
-                    >
-                      Resolve
-                    </button>
-                    <button
-                      className="rounded-md border px-2 py-1 text-xs"
-                      disabled={loading}
-                      onClick={() => setStatus(r.id, "dismissed")}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!loading && rows.length === 0 ? (
-              <tr>
-                <td className="p-6 text-center text-slate-500" colSpan={7}>
-                  Chưa có exception nào.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={load} className="btn-primary" disabled={loading}>
+          {loading ? "Đang làm mới..." : "Làm mới hàng đợi"}
+        </button>
       </div>
+
+      {err ? (
+        <div className="surface-panel text-sm" style={{ background: "rgba(181, 69, 61, 0.08)", borderColor: "rgba(181, 69, 61, 0.24)", color: "#8f3029" }}>
+          {err}
+        </div>
+      ) : null}
+      {msg ? (
+        <div className="surface-panel text-sm" style={{ background: "rgba(31, 128, 96, 0.08)", borderColor: "rgba(31, 128, 96, 0.24)", color: "#13664c" }}>
+          {msg}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <TableSkeleton rows={6} columns={7} />
+      ) : (
+        <DataTable
+          columns={[
+            {
+              key: "id",
+              header: "ID",
+              render: (row) => <span className="mono-text">{row.id}</span>
+            },
+            {
+              key: "shipment_id",
+              header: "Vận đơn",
+              render: (row) => <span className="mono-text">{row.shipment_id}</span>
+            },
+            {
+              key: "type",
+              header: "Loại ngoại lệ",
+              render: (row) => humanizeToken(row.type)
+            },
+            {
+              key: "severity",
+              header: "Mức độ",
+              render: (row) => <SeverityBadge severity={row.severity} />
+            },
+            {
+              key: "status",
+              header: "Trạng thái",
+              render: (row) => <StatusBadge status={row.status} />
+            },
+            {
+              key: "detected_at",
+              header: "Phát hiện lúc",
+              render: (row) => formatDateTime(row.detected_at)
+            },
+            {
+              key: "actions",
+              header: "Cập nhật nhanh",
+              render: (row) => (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold transition hover:-translate-y-0.5"
+                    style={{ background: "var(--panel-strong)", borderColor: "var(--line-soft)" }}
+                    disabled={loading}
+                    onClick={() => setStatus(row.id, "investigating")}
+                  >
+                    Điều tra
+                  </button>
+                  <button
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold transition hover:-translate-y-0.5"
+                    style={{ background: "var(--panel-strong)", borderColor: "var(--line-soft)" }}
+                    disabled={loading}
+                    onClick={() => setStatus(row.id, "resolved")}
+                  >
+                    Giải quyết
+                  </button>
+                  <button
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold transition hover:-translate-y-0.5"
+                    style={{ background: "var(--panel-strong)", borderColor: "var(--line-soft)" }}
+                    disabled={loading}
+                    onClick={() => setStatus(row.id, "dismissed")}
+                  >
+                    Bỏ qua
+                  </button>
+                </div>
+              )
+            }
+          ]}
+          rows={rows}
+          getRowKey={(row) => row.id}
+          emptyState={{
+            eyebrow: "Chưa có ngoại lệ",
+            title: "Hàng đợi xử lý ngoại lệ hiện đang trống",
+            description: "Khi backend phát hiện bất thường hoặc dữ liệu mẫu được tạo thêm, danh sách này sẽ xuất hiện tại đây."
+          }}
+        />
+      )}
     </div>
   );
 }
-

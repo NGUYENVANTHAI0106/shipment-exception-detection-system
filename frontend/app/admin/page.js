@@ -1,9 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiFetch } from "../lib/api";
-import { useRequireAuth } from "../lib/authGuard";
-import AdminNav from "./AdminNav";
+import { apiFetch } from "@/app/lib/api";
+import { formatNumber, humanizeToken } from "@/app/lib/format";
+import { useRequireAuth } from "@/app/lib/authGuard";
+import EmptyState from "@/components/shared/EmptyState";
+import StatCard from "@/components/shared/StatCard";
+import { PanelSkeleton, StatGridSkeleton } from "@/components/shared/Skeletons";
 
 export default function AdminHome() {
   const { ready, hasToken } = useRequireAuth();
@@ -18,7 +22,7 @@ export default function AdminHome() {
       const data = await apiFetch("/admin/summary");
       setSummary(data || null);
     } catch (e) {
-      setMsg(`Lỗi load dashboard: ${e.message}`);
+      setMsg(`Không thể tải bảng điều hành: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -30,66 +34,110 @@ export default function AdminHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, hasToken]);
 
-  if (!ready) return null;
-  if (!hasToken) {
+  const exceptionsByType = Object.entries(summary?.exceptions_by_type || {});
+  const exceptionsBySeverity = Object.entries(summary?.exceptions_by_severity || {});
+
+  if (!ready) {
     return (
-      <div className="rounded-xl border bg-white p-4">
-        Bạn chưa login. Vào <a className="underline" href="/login">/login</a>.
+      <div className="page-stack">
+        <StatGridSkeleton count={3} />
+        <PanelSkeleton rows={5} />
       </div>
     );
   }
 
+  if (!hasToken) {
+    return (
+      <EmptyState
+        eyebrow="Cần đăng nhập"
+        title="Đăng nhập trước khi mở bảng điều hành quản trị"
+        description="Khu vực quản trị dùng token hiện tại để đọc số liệu toàn hệ thống. Hãy đăng nhập rồi quay lại trang này."
+        action={
+          <Link href="/login" className="btn-primary">
+            Đi tới đăng nhập
+          </Link>
+        }
+      />
+    );
+  }
+
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Admin</h1>
-      <p className="mt-1 text-sm text-slate-600">
-        Dashboard + management pages (Day 2).
-      </p>
+    <div className="page-stack">
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          eyebrow="Khối lượng hệ thống"
+          label="Tổng vận đơn"
+          value={formatNumber(summary?.total_shipments ?? 0)}
+          hint="Toàn bộ vận đơn hiện có trên hệ thống, bất kể vai trò hay khách hàng sở hữu."
+          meta="toàn cục"
+          tone="accent"
+        />
+        <StatCard
+          eyebrow="Tín hiệu rủi ro"
+          label="Tổng ngoại lệ"
+          value={formatNumber(summary?.total_exceptions ?? 0)}
+          hint="Số ngoại lệ đã phát hiện trên toàn hệ thống và đang sẵn sàng để đội vận hành rà soát."
+          meta="ngoại lệ"
+          tone="warning"
+        />
+        <StatCard
+          eyebrow="Cần xử lý"
+          label="Ngoại lệ đang mở"
+          value={formatNumber(summary?.open_exceptions ?? 0)}
+          hint="Nhóm ca chưa đóng, phù hợp để mở nhanh sang hàng đợi quản lý ngoại lệ."
+          meta="ưu tiên"
+          tone="success"
+        />
+      </section>
 
-      <AdminNav current="dashboard" />
-
-      <div className="mt-2 flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           onClick={loadSummary}
-          className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+          className="btn-primary"
           disabled={loading}
         >
-          Refresh
+          {loading ? "Đang làm mới..." : "Làm mới số liệu"}
         </button>
       </div>
 
-      {msg ? <div className="mt-3 rounded-lg bg-red-50 p-2 text-sm text-red-700">{msg}</div> : null}
+      {msg ? (
+        <div className="surface-panel text-sm" style={{ background: "rgba(181, 69, 61, 0.08)", borderColor: "rgba(181, 69, 61, 0.24)", color: "#8f3029" }}>
+          {msg}
+        </div>
+      ) : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs text-slate-500">Total shipments</div>
-          <div className="mt-1 text-2xl font-semibold">{summary ? summary.total_shipments : "-"}</div>
+      <section className="grid gap-4 lg:grid-cols-2">
+        <div className="surface-panel">
+          <div className="section-kicker">Ngoại lệ theo loại</div>
+          <div className="mt-4 space-y-3">
+            {exceptionsByType.length > 0 ? (
+              exceptionsByType.map(([key, value]) => (
+                <div key={key} className="surface-muted flex items-center justify-between gap-3">
+                  <span className="text-sm text-[color:var(--muted)]">{humanizeToken(key)}</span>
+                  <span className="font-semibold">{formatNumber(value)}</span>
+                </div>
+              ))
+            ) : (
+              <div className="surface-muted text-sm text-[color:var(--muted)]">Chưa có số liệu theo loại ngoại lệ.</div>
+            )}
+          </div>
         </div>
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs text-slate-500">Total exceptions</div>
-          <div className="mt-1 text-2xl font-semibold">{summary ? summary.total_exceptions : "-"}</div>
+        <div className="surface-panel">
+          <div className="section-kicker">Ngoại lệ theo mức độ</div>
+          <div className="mt-4 space-y-3">
+            {exceptionsBySeverity.length > 0 ? (
+              exceptionsBySeverity.map(([key, value]) => (
+                <div key={key} className="surface-muted flex items-center justify-between gap-3">
+                  <span className="text-sm text-[color:var(--muted)]">{humanizeToken(key)}</span>
+                  <span className="font-semibold">{formatNumber(value)}</span>
+                </div>
+              ))
+            ) : (
+              <div className="surface-muted text-sm text-[color:var(--muted)]">Chưa có số liệu theo mức độ.</div>
+            )}
+          </div>
         </div>
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs text-slate-500">Open exceptions</div>
-          <div className="mt-1 text-2xl font-semibold">{summary ? summary.open_exceptions : "-"}</div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-sm font-medium">Exceptions by type</div>
-          <pre className="mt-3 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">
-            {summary ? JSON.stringify(summary.exceptions_by_type, null, 2) : "—"}
-          </pre>
-        </div>
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-sm font-medium">Exceptions by severity</div>
-          <pre className="mt-3 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">
-            {summary ? JSON.stringify(summary.exceptions_by_severity, null, 2) : "—"}
-          </pre>
-        </div>
-      </div>
+      </section>
     </div>
   );
 }
-

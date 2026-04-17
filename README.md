@@ -31,6 +31,46 @@ Sau khi chạy xong, truy cập (mặc định nginx publish ra cổng **8080**)
 - **Swagger (API docs)**: `http://localhost:8080/api/docs`
 - **n8n UI**: `http://localhost:8080/n8n/`
 
+## Chạy frontend local, backend bằng Docker
+
+Nếu bạn đang code UI và muốn dùng hot reload của Next.js local:
+
+1. Chạy backend + infra bằng Docker:
+
+```bash
+docker compose up -d postgres redis api nginx n8n
+```
+
+2. Dừng riêng frontend container để giải phóng cổng `3000`:
+
+```bash
+docker compose stop frontend
+```
+
+3. Chạy frontend local:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+4. Truy cập:
+
+- Frontend local: `http://localhost:3000`
+- API qua proxy của Next dev: `http://localhost:3000/api/health`
+
+`frontend/next.config.js` đã cấu hình rewrite:
+
+- `/api/*` -> `http://localhost:8000/api/*`
+- `/n8n/*` -> `http://localhost:5679/n8n/*`
+
+Nếu máy bạn không dùng các cổng mặc định, có thể override:
+
+```bash
+API_PROXY_TARGET=http://localhost:8001 N8N_PROXY_TARGET=http://localhost:5680 npm run dev
+```
+
 ### Đổi cổng nếu bị trùng port
 
 - **Đổi cổng nginx (mặc định 8080)**:
@@ -99,4 +139,3 @@ Import trong n8n UI: `http://localhost:8080/n8n/` → **Workflows** → **Import
 - `/` và `/admin` → Next.js frontend
 - `/api/*` → FastAPI backend
 - `/n8n/*` → n8n
-

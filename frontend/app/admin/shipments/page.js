@@ -1,9 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import AdminNav from "../AdminNav";
-import { apiFetch } from "../../lib/api";
-import { useRequireAuth } from "../../lib/authGuard";
+import { apiFetch } from "@/app/lib/api";
+import { formatDateTime, formatNumber } from "@/app/lib/format";
+import { useRequireAuth } from "@/app/lib/authGuard";
+import DataTable from "@/components/shared/DataTable";
+import EmptyState from "@/components/shared/EmptyState";
+import StatCard from "@/components/shared/StatCard";
+import StatusBadge from "@/components/shared/StatusBadge";
+import { StatGridSkeleton, TableSkeleton } from "@/components/shared/Skeletons";
 
 export default function AdminShipmentsPage() {
   const { ready, hasToken } = useRequireAuth();
@@ -18,7 +24,7 @@ export default function AdminShipmentsPage() {
       const data = await apiFetch("/admin/shipments");
       setRows(data || []);
     } catch (e) {
-      setErr(e.message || "Load failed");
+      setErr(e.message || "Không thể tải dữ liệu");
     } finally {
       setLoading(false);
     }
@@ -30,68 +36,131 @@ export default function AdminShipmentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, hasToken]);
 
-  if (!ready) return null;
-  if (!hasToken) {
+  const delayedCount = rows.filter((row) => String(row.status).toLowerCase() === "delayed").length;
+  const carrierCount = new Set(rows.map((row) => row.carrier).filter(Boolean)).size;
+
+  if (!ready) {
     return (
-      <div className="rounded-xl border bg-white p-4">
-        Bạn chưa login. Vào <a className="underline" href="/login">/login</a>.
+      <div className="page-stack">
+        <StatGridSkeleton count={3} />
+        <TableSkeleton rows={6} columns={6} />
       </div>
     );
   }
 
+  if (!hasToken) {
+    return (
+      <EmptyState
+        eyebrow="Cần đăng nhập"
+        title="Đăng nhập trước khi xem toàn bộ vận đơn"
+        description="Trang này dành cho quản trị viên và sử dụng token hiện tại để đọc danh sách vận đơn trên toàn hệ thống."
+        action={
+          <Link href="/login" className="btn-primary">
+            Đi tới đăng nhập
+          </Link>
+        }
+      />
+    );
+  }
+
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Shipments (Admin)</h1>
-      <div className="mt-1 text-sm text-slate-600">Danh sách tất cả shipments (admin).</div>
+    <div className="page-stack">
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          eyebrow="Toàn hệ thống"
+          label="Tổng vận đơn"
+          value={formatNumber(rows.length)}
+          hint="Số lượng bản ghi vận đơn hiện có mà quản trị viên có thể rà soát ngay."
+          meta="tất cả"
+          tone="accent"
+        />
+        <StatCard
+          eyebrow="Cần chú ý"
+          label="Vận đơn chậm"
+          value={formatNumber(delayedCount)}
+          hint="Nhóm vận đơn có trạng thái chậm tiến độ, phù hợp để đối chiếu nhanh với khu ngoại lệ."
+          meta="trễ"
+          tone="warning"
+        />
+        <StatCard
+          eyebrow="Mạng lưới"
+          label="Số hãng vận chuyển"
+          value={formatNumber(carrierCount)}
+          hint="Số lượng hãng vận chuyển đang xuất hiện trong dữ liệu hiện tại."
+          meta="hãng"
+          tone="success"
+        />
+      </section>
 
-      <AdminNav current="shipments" />
-
-      <button
-        onClick={load}
-        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-        disabled={loading}
-      >
-        Refresh
-      </button>
-
-      {err ? <div className="mt-3 rounded-lg bg-red-50 p-2 text-sm text-red-700">{err}</div> : null}
-
-      <div className="mt-4 overflow-auto rounded-xl border bg-white">
-        <table className="min-w-[900px] w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-600">
-            <tr>
-              <th className="p-3">ID</th>
-              <th className="p-3">User</th>
-              <th className="p-3">Tracking</th>
-              <th className="p-3">Carrier</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-t">
-                <td className="p-3 font-mono">{r.id}</td>
-                <td className="p-3 font-mono">{r.user_id}</td>
-                <td className="p-3 font-mono">{r.tracking_number}</td>
-                <td className="p-3">{r.carrier}</td>
-                <td className="p-3">{r.status}</td>
-                <td className="p-3 text-slate-600">
-                  {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
-                </td>
-              </tr>
-            ))}
-            {!loading && rows.length === 0 ? (
-              <tr>
-                <td className="p-6 text-center text-slate-500" colSpan={6}>
-                  Chưa có shipment nào.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={load} className="btn-primary" disabled={loading}>
+          {loading ? "Đang làm mới..." : "Làm mới danh sách"}
+        </button>
       </div>
+
+      {err ? (
+        <div className="surface-panel text-sm" style={{ background: "rgba(181, 69, 61, 0.08)", borderColor: "rgba(181, 69, 61, 0.24)", color: "#8f3029" }}>
+          {err}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <TableSkeleton rows={6} columns={6} />
+      ) : (
+        <DataTable
+          columns={[
+            {
+              key: "id",
+              header: "ID",
+              render: (row) => <span className="mono-text">{row.id}</span>
+            },
+            {
+              key: "user_id",
+              header: "Người sở hữu",
+              render: (row) => <span className="mono-text">{row.user_id}</span>
+            },
+            {
+              key: "tracking_number",
+              header: "Mã vận đơn",
+              render: (row) => (
+                <div>
+                  <div className="mono-text text-xs font-semibold uppercase tracking-[0.18em]">{row.tracking_number}</div>
+                  <div className="mt-2 text-sm text-[color:var(--muted)]">
+                    {[row.origin, row.destination].filter(Boolean).join(" → ") || "Chưa có tuyến giao hàng"}
+                  </div>
+                </div>
+              )
+            },
+            {
+              key: "carrier",
+              header: "Hãng vận chuyển",
+              render: (row) => (
+                <div>
+                  <div className="font-semibold">{row.carrier}</div>
+                  <div className="mt-2 text-sm text-[color:var(--muted)]">{row.current_location || "Chưa có vị trí cập nhật"}</div>
+                </div>
+              )
+            },
+            {
+              key: "status",
+              header: "Trạng thái",
+              render: (row) => <StatusBadge status={row.status} />
+            },
+            {
+              key: "updated_at",
+              header: "Cập nhật lần cuối",
+              render: (row) => formatDateTime(row.updated_at)
+            }
+          ]}
+          rows={rows}
+          getRowKey={(row) => row.id}
+          emptyState={{
+            eyebrow: "Chưa có vận đơn",
+            title: "Danh sách vận đơn toàn hệ thống đang trống",
+            description: "Hãy tạo thêm dữ liệu mẫu hoặc tạo vận đơn mới từ cổng khách hàng để kiểm tra luồng quản trị."
+          }}
+        />
+      )}
     </div>
   );
 }
-
