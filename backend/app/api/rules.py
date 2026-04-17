@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import desc, select
+from sqlalchemy import asc, desc, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
@@ -29,12 +29,40 @@ def _to_response(r: DetectionRule) -> RuleResponse:
 
 @router.get("/", response_model=list[RuleResponse])
 def list_rules(
+    q: str | None = None,
+    type: str | None = None,
+    severity: str | None = None,
+    is_active: bool | None = None,
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> list[RuleResponse]:
-    rows = db.execute(select(DetectionRule).order_by(desc(DetectionRule.created_at)).limit(limit).offset(offset)).scalars().all()
+    stmt = select(DetectionRule)
+    if q:
+        stmt = stmt.where(DetectionRule.name.ilike(f"%{q}%"))
+    if type:
+        stmt = stmt.where(DetectionRule.type == type)
+    if severity:
+        stmt = stmt.where(DetectionRule.severity == severity)
+    if is_active is not None:
+        stmt = stmt.where(DetectionRule.is_active.is_(is_active))
+
+    sort_map = {
+        "created_at": DetectionRule.created_at,
+        "name": DetectionRule.name,
+        "type": DetectionRule.type,
+        "severity": DetectionRule.severity,
+        "is_active": DetectionRule.is_active,
+        "id": DetectionRule.id,
+    }
+    sort_col = sort_map.get(sort_by, DetectionRule.created_at)
+    order_fn = desc if sort_dir.lower() != "asc" else asc
+    stmt = stmt.order_by(order_fn(sort_col)).limit(limit).offset(offset)
+
+    rows = db.execute(stmt).scalars().all()
     return [_to_response(r) for r in rows]
 
 
