@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { apiFetch, setToken } from "../lib/api";
+import Link from "next/link";
+import { useState } from "react";
+import { setToken } from "@/app/lib/api";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("admin@local.test");
@@ -10,14 +11,13 @@ export default function LoginPage() {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
 
-  const formBody = useMemo(() => new URLSearchParams({ username: email, password }), [email, password]);
-
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
     setOk(false);
     setLoading(true);
     try {
+      const formBody = new URLSearchParams({ username: email, password });
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -28,7 +28,7 @@ export default function LoginPage() {
       setToken(data.access_token);
       setOk(true);
     } catch (e2) {
-      setErr(e2.message || "Login failed");
+      setErr(e2.message || "Đăng nhập thất bại");
     } finally {
       setLoading(false);
     }
@@ -40,54 +40,60 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <h1 className="text-xl font-semibold">Đăng nhập</h1>
-      <p className="mt-1 text-sm text-slate-600">Dùng tài khoản seed để test nhanh Day 2.</p>
+    <div className="space-y-6">
+      <div>
+        <div className="section-kicker">Tài khoản mẫu</div>
+        <h1 className="mt-4 text-4xl">Đăng nhập vào cổng vận đơn.</h1>
+        <p className="mt-3 text-sm leading-7 text-[color:var(--muted)]">
+          Sử dụng một trong các tài khoản mẫu khởi tạo để lưu token truy cập cục bộ, sau đó quay lại các màn hình khách hàng hoặc quản trị và gọi API thật.
+        </p>
+      </div>
 
-      <form onSubmit={onSubmit} className="mt-6 rounded-xl border bg-white p-4 shadow-sm">
-        <label className="block text-sm font-medium">Email</label>
-        <input
-          className="mt-1 w-full rounded-lg border px-3 py-2"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="username"
-        />
+      <form onSubmit={onSubmit} className="surface-panel">
+        <label className="block">
+          <span className="field-label">Email</span>
+          <input className="field-input" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" />
+        </label>
 
-        <label className="mt-3 block text-sm font-medium">Mật khẩu</label>
-        <input
-          className="mt-1 w-full rounded-lg border px-3 py-2"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-        />
+        <label className="mt-4 block">
+          <span className="field-label">Mật khẩu</span>
+          <input
+            className="field-input"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
 
-        {err ? <div className="mt-3 rounded-lg bg-red-50 p-2 text-sm text-red-700">{err}</div> : null}
-        {ok ? <div className="mt-3 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-800">OK. Token đã lưu vào localStorage.</div> : null}
+        {err ? (
+          <div className="mt-4 rounded-[22px] border p-4 text-sm" style={{ background: "rgba(181, 69, 61, 0.08)", borderColor: "rgba(181, 69, 61, 0.24)", color: "#8f3029" }}>
+            {err}
+          </div>
+        ) : null}
 
-        <div className="mt-4 flex gap-2">
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {loading ? "Đang login..." : "Login"}
+        {ok ? (
+          <div className="mt-4 rounded-[22px] border p-4 text-sm" style={{ background: "rgba(31, 128, 96, 0.08)", borderColor: "rgba(31, 128, 96, 0.24)", color: "#13664c" }}>
+            Đăng nhập thành công. Token truy cập đã được lưu cục bộ trên trình duyệt.
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button type="submit" disabled={loading} className="btn-primary">
+            {loading ? "Đang đăng nhập..." : "Đăng nhập"}
           </button>
-          <button
-            type="button"
-            onClick={onLogout}
-            className="rounded-lg border px-4 py-2 text-sm font-medium"
-          >
-            Logout
+          <button type="button" onClick={onLogout} className="btn-secondary">
+            Đăng xuất
           </button>
         </div>
       </form>
 
-      <div className="mt-4 text-sm text-slate-600">
-        Sau khi login, thử vào <a className="underline" href="/shipments">/shipments</a> và{" "}
-        <a className="underline" href="/exceptions">/exceptions</a>.
-      </div>
+      <section className="surface-muted">
+        <div className="section-kicker">Đi tới nhanh sau khi đăng nhập</div>
+        <p className="mt-3 text-sm leading-7 text-[color:var(--muted)]">
+          Sau khi đăng nhập, bạn có thể tiếp tục đến <Link href="/shipments" className="underline">/shipments</Link> hoặc <Link href="/exceptions" className="underline">/exceptions</Link>.
+        </p>
+      </section>
     </div>
   );
 }
-

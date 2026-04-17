@@ -1,9 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import AdminNav from "../AdminNav";
-import { apiFetch } from "../../lib/api";
-import { useRequireAuth } from "../../lib/authGuard";
+import { apiFetch } from "@/app/lib/api";
+import { formatDateTime, formatNumber, humanizeToken } from "@/app/lib/format";
+import { useRequireAuth } from "@/app/lib/authGuard";
+import DataTable from "@/components/shared/DataTable";
+import EmptyState from "@/components/shared/EmptyState";
+import StatCard from "@/components/shared/StatCard";
+import { StatGridSkeleton, TableSkeleton } from "@/components/shared/Skeletons";
 
 export default function AdminUsersPage() {
   const { ready, hasToken } = useRequireAuth();
@@ -20,7 +25,7 @@ export default function AdminUsersPage() {
       const data = await apiFetch("/admin/users");
       setRows(data || []);
     } catch (e) {
-      setErr(e.message || "Load failed");
+      setErr(e.message || "Không thể tải dữ liệu");
     } finally {
       setLoading(false);
     }
@@ -33,10 +38,10 @@ export default function AdminUsersPage() {
     try {
       const next = u.role === "admin" ? "client" : "admin";
       await apiFetch(`/admin/users/${u.id}`, { method: "PATCH", body: { role: next } });
-      setMsg(`Đã cập nhật user id=${u.id} -> role=${next}`);
+      setMsg(`Đã cập nhật người dùng #${u.id} sang vai trò "${humanizeToken(next)}".`);
       await load();
     } catch (e) {
-      setErr(e.message || "Update failed");
+      setErr(e.message || "Không thể cập nhật vai trò");
     } finally {
       setLoading(false);
     }
@@ -48,75 +53,137 @@ export default function AdminUsersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, hasToken]);
 
-  if (!ready) return null;
-  if (!hasToken) {
+  const adminCount = rows.filter((row) => row.role === "admin").length;
+  const clientCount = rows.filter((row) => row.role === "client").length;
+
+  if (!ready) {
     return (
-      <div className="rounded-xl border bg-white p-4">
-        Bạn chưa login. Vào <a className="underline" href="/login">/login</a>.
+      <div className="page-stack">
+        <StatGridSkeleton count={3} />
+        <TableSkeleton rows={6} columns={6} />
       </div>
     );
   }
 
+  if (!hasToken) {
+    return (
+      <EmptyState
+        eyebrow="Cần đăng nhập"
+        title="Đăng nhập trước khi quản lý người dùng"
+        description="Trang phân quyền yêu cầu token quản trị để thay đổi vai trò giữa khách hàng và quản trị viên."
+        action={
+          <Link href="/login" className="btn-primary">
+            Đi tới đăng nhập
+          </Link>
+        }
+      />
+    );
+  }
+
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Users (Admin)</h1>
-      <div className="mt-1 text-sm text-slate-600">Quản lý users/roles (v1).</div>
+    <div className="page-stack">
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          eyebrow="Tài khoản hệ thống"
+          label="Tổng người dùng"
+          value={formatNumber(rows.length)}
+          hint="Tổng số tài khoản hiện có trên hệ thống ở mọi vai trò."
+          meta="người dùng"
+          tone="accent"
+        />
+        <StatCard
+          eyebrow="Quyền quản trị"
+          label="Số quản trị viên"
+          value={formatNumber(adminCount)}
+          hint="Nhóm tài khoản có quyền quản trị và điều phối hệ thống."
+          meta="quản trị"
+          tone="warning"
+        />
+        <StatCard
+          eyebrow="Khách hàng"
+          label="Số tài khoản khách hàng"
+          value={formatNumber(clientCount)}
+          hint="Tài khoản đang sử dụng cổng theo dõi vận đơn ở vai trò khách hàng."
+          meta="khách hàng"
+          tone="success"
+        />
+      </section>
 
-      <AdminNav current="users" />
-
-      <button
-        onClick={load}
-        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-        disabled={loading}
-      >
-        Refresh
-      </button>
-
-      {err ? <div className="mt-3 rounded-lg bg-red-50 p-2 text-sm text-red-700">{err}</div> : null}
-      {msg ? <div className="mt-3 rounded-lg bg-emerald-50 p-2 text-sm text-emerald-700">{msg}</div> : null}
-
-      <div className="mt-4 overflow-auto rounded-xl border bg-white">
-        <table className="min-w-[900px] w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-slate-600">
-            <tr>
-              <th className="p-3">ID</th>
-              <th className="p-3">Email</th>
-              <th className="p-3">Role</th>
-              <th className="p-3">Company</th>
-              <th className="p-3">Created</th>
-              <th className="p-3">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((u) => (
-              <tr key={u.id} className="border-t">
-                <td className="p-3 font-mono">{u.id}</td>
-                <td className="p-3">{u.email}</td>
-                <td className="p-3">{u.role}</td>
-                <td className="p-3">{u.company_name || "-"}</td>
-                <td className="p-3 text-slate-600">{new Date(u.created_at).toLocaleString()}</td>
-                <td className="p-3">
-                  <button
-                    className="rounded-md border px-2 py-1 text-xs"
-                    disabled={loading}
-                    onClick={() => toggleRole(u)}
-                  >
-                    Toggle role
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {!loading && rows.length === 0 ? (
-              <tr>
-                <td className="p-6 text-center text-slate-500" colSpan={6}>
-                  Chưa có user nào.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={load} className="btn-primary" disabled={loading}>
+          {loading ? "Đang làm mới..." : "Làm mới danh sách"}
+        </button>
       </div>
+
+      {err ? (
+        <div className="surface-panel text-sm" style={{ background: "rgba(181, 69, 61, 0.08)", borderColor: "rgba(181, 69, 61, 0.24)", color: "#8f3029" }}>
+          {err}
+        </div>
+      ) : null}
+      {msg ? (
+        <div className="surface-panel text-sm" style={{ background: "rgba(31, 128, 96, 0.08)", borderColor: "rgba(31, 128, 96, 0.24)", color: "#13664c" }}>
+          {msg}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <TableSkeleton rows={6} columns={6} />
+      ) : (
+        <DataTable
+          columns={[
+            {
+              key: "id",
+              header: "ID",
+              render: (row) => <span className="mono-text">{row.id}</span>
+            },
+            {
+              key: "email",
+              header: "Email",
+              render: (row) => row.email
+            },
+            {
+              key: "role",
+              header: "Vai trò",
+              render: (row) => humanizeToken(row.role)
+            },
+            {
+              key: "company_name",
+              header: "Công ty",
+              render: (row) => row.company_name || "Chưa khai báo"
+            },
+            {
+              key: "created_at",
+              header: "Ngày tạo",
+              render: (row) => formatDateTime(row.created_at)
+            },
+            {
+              key: "action",
+              header: "Thao tác",
+              render: (row) => {
+                const nextRole = row.role === "admin" ? "client" : "admin";
+
+                return (
+                  <button
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold transition hover:-translate-y-0.5"
+                    style={{ background: "var(--panel-strong)", borderColor: "var(--line-soft)" }}
+                    disabled={loading}
+                    onClick={() => toggleRole(row)}
+                  >
+                    Chuyển sang {humanizeToken(nextRole)}
+                  </button>
+                );
+              }
+            }
+          ]}
+          rows={rows}
+          getRowKey={(row) => row.id}
+          emptyState={{
+            eyebrow: "Chưa có người dùng",
+            title: "Danh sách tài khoản hiện đang trống",
+            description: "Khi có tài khoản mới được khởi tạo hoặc đăng ký, bạn sẽ quản lý vai trò của họ tại đây."
+          }}
+        />
+      )}
     </div>
   );
 }
-
