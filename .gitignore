@@ -2,3 +2,11 @@
 .env
 __pycache__/
 *.pyc
+
+# Frontend build/dependency artifacts
+frontend/node_modules/
+frontend/.next/
+
+# Common noise files
+.DS_Store
+*.log
