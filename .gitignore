@@ -10,3 +10,10 @@ frontend/.next/
 # Common noise files
 .DS_Store
 *.log
+
+# Local scripts and planning docs
+*.sh
+PRD-v2-AI-Optimized-Shipment-Exception-vi.md
+
+# Design workspace
+figma-make/
