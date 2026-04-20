@@ -1,0 +1,242 @@
+{
+  "name": "WF2 - AI Classification (S3)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf2-classify",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf2-webhook",
+      "name": "WF2 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e.id AS exception_id, e.shipment_id, e.exception_type, e.reason, e.severity_hint, e.overdue_hours, s.carrier, s.destination, s.failed_attempts, s.created_at\nFROM exceptions e\nJOIN shipments s ON s.id = e.shipment_id\nWHERE e.id = $1\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{[$json.body.exception_id || $json.exception_id]}}"
+        }
+      },
+      "id": "load-current-exception",
+      "name": "Load Exception + Shipment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "replace-with-postgres-credential-id",
+          "name": "Postgres Internal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT exception_type, detected_at\nFROM exceptions\nWHERE shipment_id = $1\nORDER BY detected_at DESC\nLIMIT 5;",
+        "options": {
+          "queryReplacement": "={{[$json.shipment_id]}}"
+        }
+      },
+      "id": "load-history",
+      "name": "Load Exception History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        760,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "replace-with-postgres-credential-id",
+          "name": "Postgres Internal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const current = $('Load Exception + Shipment').item.json;\nconst historyRows = $input.all().map((item) => item.json);\nconst latest = historyRows[0] || {};\nconst shipmentAgeDays = Math.max(0, Math.floor((Date.now() - new Date(current.created_at).getTime()) / (1000 * 60 * 60 * 24)));\n\nreturn [{\n  json: {\n    exception_id: current.exception_id,\n    shipment_id: current.shipment_id,\n    exception_data: {\n      exception_type: current.exception_type,\n      reason: current.reason,\n      severity_hint: current.severity_hint,\n      overdue_hours: Number(current.overdue_hours || 0),\n      carrier: current.carrier,\n      destination: current.destination,\n      failed_attempts: current.failed_attempts || 0\n    },\n    history_context: {\n      previous_exception_count: historyRows.length,\n      last_exception_type: latest.exception_type || 'none',\n      shipment_age_days: shipmentAgeDays\n    }\n  }\n}];"
+      },
+      "id": "build-classifier-payload",
+      "name": "Build Classifier Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://classifier:8002/classify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { exception_data: $json.exception_data, history_context: $json.history_context } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-classifier",
+      "name": "Call Classifier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Build Classifier Payload').item.json;\nreturn [{\n  json: {\n    exception_id: meta.exception_id,\n    shipment_id: meta.shipment_id,\n    severity: $json.severity,\n    exception_type: $json.exception_type,\n    ai_suggestion: $json.suggested_action,\n    confidence: Number($json.confidence || 0),\n    fallback_used: Boolean($json.fallback_used),\n    fallback_reason: $json.fallback_reason,\n    model_used: $json.model_used,\n    escalate_to_manager: Boolean($json.escalate_to_manager),\n    classified_at: $json.classified_at,\n    overdue_hours: Number(meta.exception_data.overdue_hours || 0),\n    reason: meta.exception_data.reason,\n    severity_hint: meta.exception_data.severity_hint,\n    carrier: meta.exception_data.carrier,\n    destination: meta.exception_data.destination\n  }\n}];"
+      },
+      "id": "enrich-classification-result",
+      "name": "Enrich Classification Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1470,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE exceptions\nSET severity = $1,\n    ai_suggestion = $2,\n    confidence = $3,\n    fallback_used = $4,\n    classified_at = $5\nWHERE id = $6;",
+        "options": {
+          "queryReplacement": "={{[$json.severity, $json.ai_suggestion, $json.confidence, $json.fallback_used, $json.classified_at, $json.exception_id]}}"
+        }
+      },
+      "id": "update-exception-classification",
+      "name": "Update Exception Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1700,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "replace-with-postgres-credential-id",
+          "name": "Postgres Internal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://n8n:5678/webhook/wf3-notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "trigger-wf3",
+      "name": "Trigger WF3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1930,
+        260
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WF2 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Exception + Shipment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Exception + Shipment": {
+      "main": [
+        [
+          {
+            "node": "Load Exception History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Exception History": {
+      "main": [
+        [
+          {
+            "node": "Build Classifier Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Classifier Payload": {
+      "main": [
+        [
+          {
+            "node": "Call Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Classifier": {
+      "main": [
+        [
+          {
+            "node": "Enrich Classification Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Classification Result": {
+      "main": [
+        [
+          {
+            "node": "Update Exception Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Exception Classification": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "wf2-s3-version-1",
+  "meta": {
+    "description": "WF2 for S3 scope: load context, classify with fallback, update exceptions, trigger WF3."
+  },
+  "id": "wf2-s3-ai-classification",
+  "tags": []
+}
