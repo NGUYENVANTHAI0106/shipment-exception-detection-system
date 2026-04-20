@@ -1,0 +1,436 @@
+{
+  "name": "WF1 - Ingestion and Detection (S2)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://mock-data:8004/shipments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "count",
+              "value": "30"
+            },
+            {
+              "name": "exception_ratio",
+              "value": "0.4"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-shipments",
+      "name": "Get Shipments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const required = [\"id\", \"tracking_number\", \"carrier\", \"destination\", \"status\", \"expected_delivery\", \"last_updated\"];\nconst items = $json.items || [];\nconst valid = items.filter((s) => required.every((f) => s[f] !== undefined && s[f] !== null));\nreturn valid.map((shipment) => ({ json: { shipment } }));"
+      },
+      "id": "validate-shipments",
+      "name": "Validate Shipment Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        730,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        970,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "processed:{{$json.shipment.id}}"
+      },
+      "id": "redis-get",
+      "name": "Redis Dedup Get",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        170
+      ],
+      "credentials": {
+        "redis": {
+          "id": "replace-with-redis-credential-id",
+          "name": "Redis Internal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cache-hit",
+              "leftValue": "={{$json.value}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-cache-hit",
+      "name": "IF Cache Hit",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1410,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://detector:8001/detect",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { shipment: $json.shipment } }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "detect-exception",
+      "name": "Call Detector",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-exception",
+              "leftValue": "={{$json.is_exception}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "is-not-skipped",
+              "leftValue": "={{$json.skipped}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-exception",
+      "name": "IF Exception and Not Skipped",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1410,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "propertyName": "processed:{{$json.shipment_id}}",
+        "value": "1",
+        "expire": true,
+        "ttl": 3600
+      },
+      "id": "redis-set",
+      "name": "Redis Dedup Set TTL",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "replace-with-redis-credential-id",
+          "name": "Redis Internal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    shipment_id: $json.shipment_id,\n    exception_type: $json.exception_type,\n    reason: $json.reason,\n    severity_hint: $json.severity_hint,\n    overdue_hours: $json.overdue_hours || 0,\n    status: 'open',\n    detected_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "set-exception-payload",
+      "name": "Set Exception Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO exceptions (shipment_id, exception_type, reason, severity_hint, overdue_hours, status, detected_at)\nVALUES ($1, $2, $3, $4, $5, $6, $7)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{[$json.shipment_id, $json.exception_type, $json.reason, $json.severity_hint, $json.overdue_hours, $json.status, $json.detected_at]}}"
+        }
+      },
+      "id": "postgres-insert-exception",
+      "name": "Postgres Insert Exception",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2090,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "replace-with-postgres-credential-id",
+          "name": "Postgres Internal"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://n8n:5678/webhook/wf2-classify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { exception_id: $json[0]?.id || $json.id } }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "trigger-wf2",
+      "name": "Trigger WF2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2310,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Shipments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Shipments": {
+      "main": [
+        [
+          {
+            "node": "Validate Shipment Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Shipment Fields": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Redis Dedup Get",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Call Detector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Dedup Get": {
+      "main": [
+        [
+          {
+            "node": "IF Cache Hit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Detector": {
+      "main": [
+        [
+          {
+            "node": "IF Exception and Not Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Exception and Not Skipped": {
+      "main": [
+        [
+          {
+            "node": "Redis Dedup Set TTL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Redis Dedup Set TTL": {
+      "main": [
+        [
+          {
+            "node": "Set Exception Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Exception Payload": {
+      "main": [
+        [
+          {
+            "node": "Postgres Insert Exception",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Insert Exception": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger WF2": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "IF Cache Hit": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Call Detector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "wf1-s2-version-1",
+  "meta": {
+    "description": "WF1 for S2 scope: ingestion, dedup, detect, insert exception, trigger WF2."
+  },
+  "id": "wf1-s2-ingestion-detection",
+  "tags": []
+}
