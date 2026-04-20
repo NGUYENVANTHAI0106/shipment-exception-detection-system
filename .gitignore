@@ -1,7 +1,16 @@
 
 .env
+.env.*
+!.env.example
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
 
 # Frontend build/dependency artifacts
 frontend/node_modules/
@@ -10,6 +19,8 @@ frontend/.next/
 # Common noise files
 .DS_Store
 *.log
+*.swp
+*.swo
 
 # Local scripts and planning docs
 *.sh
