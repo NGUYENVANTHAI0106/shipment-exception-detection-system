@@ -187,14 +187,22 @@ def notify(payload: NotifyRequest) -> dict:
         if email_sent_to:
             channels_sent.append("email")
 
+    is_success = True
+    skipped_reason = None
+    if decision.channels and not channels_sent:
+        is_success = False
+        skipped_reason = "notification_delivery_failed"
+    elif not decision.channels:
+        skipped_reason = "low_severity_no_notification"
+
     return {
-        "success": True,
+        "success": is_success,
         "exception_id": payload.exception_id,
         "channels_sent": channels_sent,
         "telegram_message_id": telegram_message_id,
         "email_sent_to": email_sent_to,
         "is_escalated": decision.is_escalated,
-        "skipped_reason": None,
+        "skipped_reason": skipped_reason,
     }
 
 

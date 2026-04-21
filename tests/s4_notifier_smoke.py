@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.notifier.core import apply_sla_escalation, route_channels
+from services.notifier.main import NotifyRequest, notify
 
 
 def run_smoke_tests() -> None:
@@ -22,7 +23,23 @@ def run_smoke_tests() -> None:
     assert low.channels == []
     assert low.is_escalated is False
 
-    print("S4 notifier smoke tests passed: 4/4")
+    # Review fix: when there are required channels but delivery fails, API returns success=false.
+    failed_notify = notify(
+        NotifyRequest(
+            exception_id="00000000-0000-0000-0000-000000000100",
+            severity="HIGH",
+            exception_type="delay",
+            overdue_hours=10,
+            reason="test",
+            ai_suggestion="test",
+            carrier="GHN",
+            is_already_notified=False,
+        )
+    )
+    assert failed_notify["success"] is False
+    assert failed_notify["skipped_reason"] == "notification_delivery_failed"
+
+    print("S4 notifier smoke tests passed: 5/5")
 
 
 if __name__ == "__main__":
