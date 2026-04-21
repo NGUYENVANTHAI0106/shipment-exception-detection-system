@@ -59,21 +59,21 @@ export function DashboardPage() {
   }, [items, severityFilter, typeFilter, carrierFilter]);
 
   return (
-    <div className="page-container">
-      <header className="page-header">
+    <div className="page-container fm-dashboard-page">
+      <header className="page-header fm-page-head">
         <h1>Danh sách ngoại lệ</h1>
         <p>Theo dõi và xử lý các đơn vận chuyển có vấn đề</p>
       </header>
 
-      <section className="card">
-        <div className="card-title-row">
+      <section className="card fm-filter-card">
+        <div className="card-title-row fm-filter-title">
           <div className="title-left">
             <Filter size={18} />
             <strong>Bộ lọc</strong>
           </div>
         </div>
-        <div className="filter-grid">
-          <label>
+        <div className="filter-grid fm-filter-grid">
+          <label className="fm-field">
             Mức độ
             <select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as Severity | "all")}>
               <option value="all">Tất cả</option>
@@ -83,7 +83,7 @@ export function DashboardPage() {
               <option value="LOW">LOW</option>
             </select>
           </label>
-          <label>
+          <label className="fm-field">
             Loại ngoại lệ
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as ExceptionType | "all")}>
               <option value="all">Tất cả</option>
@@ -93,7 +93,7 @@ export function DashboardPage() {
               <option value="address_issue">Địa chỉ</option>
             </select>
           </label>
-          <label>
+          <label className="fm-field">
             Hãng vận chuyển
             <select value={carrierFilter} onChange={(e) => setCarrierFilter(e.target.value)}>
               <option value="all">Tất cả</option>
@@ -106,7 +106,7 @@ export function DashboardPage() {
         </div>
       </section>
 
-      <section className="card table-card">
+      <section className="card table-card fm-table-wrap">
         {loading ? (
           <p className="empty">Đang tải dữ liệu...</p>
         ) : filtered.length === 0 ? (
@@ -154,13 +154,16 @@ export function DashboardPage() {
                   <td>{formatDate(item.detected_at)}</td>
                   <td>
                     <Link to={`/dashboard/exception/${item.id}`} className="details-link">
-                      Chi tiết
+                      Chi tiết →
                     </Link>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {!loading && filtered.length > 0 && (
+          <div className="fm-table-foot">Hiển thị {filtered.length} ngoại lệ • Ưu tiên CRITICAL trên cùng</div>
         )}
       </section>
     </div>
