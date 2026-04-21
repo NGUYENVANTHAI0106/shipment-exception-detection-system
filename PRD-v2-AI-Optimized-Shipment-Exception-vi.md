@@ -460,8 +460,8 @@ Ví dụ JSON cho **detector / classifier / notifier** (HTTP): vẫn tham chiế
 
 ### 7.1 WF1 — Thu thập & phát hiện
 
-**Trigger:** Schedule, cron `*/5 * * * *`  
-**Chủ sở hữu:** Người 1 (có thể gán trong nhóm)  
+**Trigger:** Schedule, cron `*/5 * * * *`
+**Chủ sở hữu:** Người 1 (có thể gán trong nhóm)
 **Mục đích:** Lấy lô → phát hiện → lưu PostgreSQL → gọi WF2
 
 | Bước | Loại node | Nội dung chính |
@@ -482,16 +482,16 @@ Ví dụ JSON cho **detector / classifier / notifier** (HTTP): vẫn tham chiế
 
 ### 7.2 WF2 — Phân tích AI
 
-**Trigger:** Webhook `wf2-classify`  
+**Trigger:** Webhook `wf2-classify`
 **Mục đích:** Lấy lịch sử + shipment → `POST classifier/classify` → cập nhật DB → gọi WF3
 
-Luồng: Webhook → SELECT lịch sử `exceptions` + `shipments` → Merge → Code build payload → POST classify → IF hợp lệ / fallback → Switch theo severity → `UPDATE exceptions` (Postgres) → POST `wf3-notify`.  
+Luồng: Webhook → SELECT lịch sử `exceptions` + `shipments` → Merge → Code build payload → POST classify → IF hợp lệ / fallback → Switch theo severity → `UPDATE exceptions` (Postgres) → POST `wf3-notify`.
 **Lưu ý:** Classifier Python đã có fallback; các node IF/Code trong WF2 là lớp phòng thủ thêm.
 
 ### 7.3 WF3 — Thông báo
 
-**Trigger:** Webhook `wf3-notify`  
-Luồng: Code tính SLA + `apply_sla_escalation` → GET trạng thái → IF đã notified → POST `/notify` → IF success → (tùy chọn) POST `/escalate` → PATCH exceptions → POST audit_logs → Respond.  
+**Trigger:** Webhook `wf3-notify`
+Luồng: Code tính SLA + `apply_sla_escalation` → GET trạng thái → IF đã notified → POST `/notify` → IF success → (tùy chọn) POST `/escalate` → PATCH exceptions → POST audit_logs → Respond.
 **Lỗi nhánh:** Dòng ERR ghi `audit_logs` action `error` — trong PRD gốc có câu “don’t leave WF2 hanging” nên có thể là lỗi đánh máy (nên là WF3).
 
 ---
@@ -556,10 +556,10 @@ N8N_WEBHOOK_URL=http://n8n:5678
 
 ### 9.2 Bản đồ gọi dịch vụ (tóm tắt)
 
-- WF1 → mock-data, Redis (wrapper), detector, **PostgreSQL INSERT `exceptions`**, webhook WF2  
-- WF2 → **PostgreSQL SELECT/UPDATE**, classifier, webhook WF3  
-- WF3 → **PostgreSQL SELECT/UPDATE**, notifier `/notify` và `/escalate`, **INSERT `audit_logs`**  
-- Client → **Next.js server** đọc/ghi Postgres qua API (không mở DB ra internet); route `/api/*` cho leo thang thủ công tới notifier  
+- WF1 → mock-data, Redis (wrapper), detector, **PostgreSQL INSERT `exceptions`**, webhook WF2
+- WF2 → **PostgreSQL SELECT/UPDATE**, classifier, webhook WF3
+- WF3 → **PostgreSQL SELECT/UPDATE**, notifier `/notify` và `/escalate`, **INSERT `audit_logs`**
+- Client → **Next.js server** đọc/ghi Postgres qua API (không mở DB ra internet); route `/api/*` cho leo thang thủ công tới notifier
 
 Chi tiết endpoint HTTP (detector/classifier/notifier): Section 6 bản tiếng Anh.
 
@@ -591,8 +591,8 @@ Chi tiết endpoint HTTP (detector/classifier/notifier): Section 6 bản tiếng
 
 ### 10.4 Kế hoạch triển khai 3 ngày
 
-> **Chế độ thực thi: Single Developer tuần tự**  
-> Bạn làm một mình nên triển khai theo thứ tự cứng: **Member A scope xong hoàn toàn → Member B scope → Member C scope**.  
+> **Chế độ thực thi: Single Developer tuần tự**
+> Bạn làm một mình nên triển khai theo thứ tự cứng: **Member A scope xong hoàn toàn → Member B scope → Member C scope**.
 > Không mở task song song giữa các member giả lập.
 
 #### 10.4.1 Lộ trình tuần tự 3 ngày (A → B → C)
@@ -711,11 +711,11 @@ Chi tiết endpoint HTTP (detector/classifier/notifier): Section 6 bản tiếng
 
 ## PHỤ LỤC — GỢI Ý CẢI THIỆN CHO ĐỀ TÀI / BÀI MÔN n8n
 
-1. **Redis và HTTP:** `redis:6379` không phải REST. Thống nhất: dùng **node Redis** của n8n, **Command Line/Exec**, hoặc một **microservice** nhỏ `GET/SET` qua HTTP — cập nhật PRD cho khớp công cụ thật.  
-2. **Khử trùng WF1 vs Python:** Logic Python ghi cache sau mọi lần chạy rule; sơ đồ WF1 chỉ ghi Redis khi có ngoại lệ — **cần sửa một phía** để hành vi giống nhau.  
-3. **Leo thang kép:** Ma trận mục 5 + `/notify` + `/escalate` + Switch WF3 có thể **gửi trùng** Telegram cho quản lý — làm rõ: notifier gom hết trong `/notify` *hoặc* chỉ `/escalate` khi cần.  
-4. **RPC Analytics:** `avg_response_time_minutes`, `exceptions_by_hour` được gọi trong mục 8.3 nhưng **chưa có định nghĩa SQL** trong Section 2 — bổ sung migration/function.  
-5. **Model Claude:** Chuỗi `claude-haiku-4-5-20251001` cần **đối chiếu tài liệu Anthropic** tại thời điểm triển khai.  
-6. **Phạm vi môn n8n:** Có thể thêm mục **MVP chỉ n8n**: mock-data → detector (hoặc Code node gọi rule đơn giản) → **Postgres** → Telegram, để chứng minh luồng; phần Next.js + nhiều service Python là **mở rộng**.  
-7. **Bảo mật:** Ghi rõ **không** nhúng service role key vào frontend; credential chỉ trong n8n và backend.  
+1. **Redis và HTTP:** `redis:6379` không phải REST. Thống nhất: dùng **node Redis** của n8n, **Command Line/Exec**, hoặc một **microservice** nhỏ `GET/SET` qua HTTP — cập nhật PRD cho khớp công cụ thật.
+2. **Khử trùng WF1 vs Python:** Logic Python ghi cache sau mọi lần chạy rule; sơ đồ WF1 chỉ ghi Redis khi có ngoại lệ — **cần sửa một phía** để hành vi giống nhau.
+3. **Leo thang kép:** Ma trận mục 5 + `/notify` + `/escalate` + Switch WF3 có thể **gửi trùng** Telegram cho quản lý — làm rõ: notifier gom hết trong `/notify` *hoặc* chỉ `/escalate` khi cần.
+4. **RPC Analytics:** `avg_response_time_minutes`, `exceptions_by_hour` được gọi trong mục 8.3 nhưng **chưa có định nghĩa SQL** trong Section 2 — bổ sung migration/function.
+5. **Model Claude:** Chuỗi `claude-haiku-4-5-20251001` cần **đối chiếu tài liệu Anthropic** tại thời điểm triển khai.
+6. **Phạm vi môn n8n:** Có thể thêm mục **MVP chỉ n8n**: mock-data → detector (hoặc Code node gọi rule đơn giản) → **Postgres** → Telegram, để chứng minh luồng; phần Next.js + nhiều service Python là **mở rộng**.
+7. **Bảo mật:** Ghi rõ **không** nhúng service role key vào frontend; credential chỉ trong n8n và backend.
 8. **WF3 Error Trigger:** Sửa câu “don’t leave WF2 hanging” → **WF3** nếu chỉnh PRD gốc.
