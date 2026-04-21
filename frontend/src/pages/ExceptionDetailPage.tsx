@@ -1,4 +1,16 @@
-import { ArrowLeft, Save, Siren, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Calendar,
+  ChevronRight,
+  Clock,
+  MapPin,
+  Package,
+  Save,
+  Siren,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { SeverityBadge } from "../components/SeverityBadge";
@@ -79,62 +91,114 @@ export function ExceptionDetailPage() {
   };
 
   return (
-    <div className="page-container">
-      <div className="breadcrumb">
-        <Link to="/dashboard">
-          <ArrowLeft size={14} />
-          Back
-        </Link>
+    <div className="page-container fm-detail-page">
+      <div className="fm-breadcrumb">
+        <Link to="/dashboard">Ngoại lệ</Link>
+        <ChevronRight size={14} />
+        <span>Chi tiết</span>
       </div>
+      <Link to="/dashboard" className="fm-back-link">
+        <ArrowLeft size={14} />
+        Quay lại danh sách
+      </Link>
 
-      <div className="detail-grid">
-        <section className="card detail-main">
-          <div className="detail-top">
+      <div className="fm-detail-grid">
+        <section className="fm-card">
+          <div className="fm-summary-head">
             <div>
-              <h1>{item.tracking_number}</h1>
-              <div className="inline-badges">
+              <h1 className="fm-code-title">{item.tracking_number}</h1>
+              <div className="fm-inline">
                 <SeverityBadge severity={item.severity} />
-                <StatusBadge status={status} />
+                <span className="fm-dot">•</span>
+                <span className="fm-type-text">{item.exception_type}</span>
               </div>
+            </div>
+            <div className="fm-status-col">
+              <p>Trạng thái xử lý</p>
+              <StatusBadge status={status} />
             </div>
           </div>
 
-          <div className="summary-grid">
+          <div className="fm-split-grid">
+            <div className="fm-icon-row">
+              <Package size={17} />
+              <div>
+                <p>Hãng vận chuyển</p>
+                <strong>{item.carrier}</strong>
+              </div>
+            </div>
+            <div className="fm-icon-row">
+              <Clock size={17} />
+              <div>
+                <p>Quá hạn</p>
+                <strong className="fm-overdue">{item.overdue_hours} giờ</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="fm-card">
+          <h2 className="fm-section-title">
+            <MapPin size={17} />
+            Thông tin lô hàng
+          </h2>
+          <div className="fm-meta-grid">
             <div>
-              <span>Carrier</span>
-              <strong>{item.carrier}</strong>
+              <p>Điểm gửi</p>
+              <strong>{item.origin}</strong>
             </div>
             <div>
-              <span>Route</span>
+              <p>Điểm nhận</p>
+              <strong>{item.destination}</strong>
+            </div>
+            <div>
+              <p>Thời điểm phát hiện</p>
+              <strong>{formatDate(item.detected_at)}</strong>
+            </div>
+            <div>
+              <p>Tuyến</p>
               <strong>
                 {item.origin} {"->"} {item.destination}
               </strong>
             </div>
-            <div>
-              <span>Overdue</span>
-              <strong>{item.overdue_hours} hours</strong>
-            </div>
-            <div>
-              <span>Detected</span>
-              <strong>{formatDate(item.detected_at)}</strong>
-            </div>
           </div>
+          {item.exception_type === "failed_delivery" && (
+            <div className="fm-warning-row">
+              <AlertTriangle size={14} />
+              <span>Ngoại lệ giao thất bại cần xác nhận lại với người nhận</span>
+            </div>
+          )}
+        </section>
 
-          <div className="ai-card">
+        <section className="fm-ai-card">
+          <div className="fm-ai-head">
             <h3>
               <Sparkles size={16} />
-              Suggested action
+              Gợi ý xử lý
             </h3>
-            <p>{item.ai_suggestion || "No AI suggestion available."}</p>
+            {item.confidence ? (
+              <span className="fm-confidence">
+                <TrendingUp size={14} />
+                Độ tin cậy {(item.confidence * 100).toFixed(0)}%
+              </span>
+            ) : (
+              <span className="fm-fallback">AI không khả dụng — theo quy tắc</span>
+            )}
           </div>
+          <p>{item.ai_suggestion || "Không có gợi ý AI, vui lòng xử lý theo checklist vận hành."}</p>
+        </section>
 
-          <div className="timeline">
-            <h3>Timeline</h3>
+        <section className="fm-card">
+          <h2 className="fm-section-title">
+            <Calendar size={17} />
+            Lịch sử xử lý
+          </h2>
+          <div className="fm-timeline">
             {timeline.map((event, idx) => (
-              <div key={`${event.timestamp}-${idx}`} className="timeline-item">
-                <div className="dot" />
+              <div key={`${event.timestamp}-${idx}`} className="fm-timeline-item">
+                <div className="fm-timeline-dot" />
                 <div>
-                  <strong>{event.event}</strong>
+                  <strong className="fm-timeline-title">{event.event}</strong>
                   <p>{event.description}</p>
                   <small>{formatDate(event.timestamp)}</small>
                 </div>
@@ -143,9 +207,9 @@ export function ExceptionDetailPage() {
           </div>
         </section>
 
-        <aside className="card detail-actions">
+        <aside className="fm-card fm-actions">
           <h3>Actions</h3>
-          <label>
+          <label className="fm-field">
             Update status
             <select value={status} onChange={(e) => setStatus(e.target.value as ExceptionStatus)}>
               <option value="open">open</option>
@@ -155,7 +219,7 @@ export function ExceptionDetailPage() {
             </select>
           </label>
 
-          <label>
+          <label className="fm-field">
             Resolution note
             <textarea
               rows={6}
@@ -165,12 +229,12 @@ export function ExceptionDetailPage() {
             />
           </label>
 
-          <button className="btn btn-primary" disabled={saving} onClick={handleSave}>
+          <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleSave}>
             <Save size={16} />
             Save changes
           </button>
 
-          <button className="btn btn-secondary" disabled={saving} onClick={handleEscalate}>
+          <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleEscalate}>
             <Siren size={16} />
             Manual escalate
           </button>

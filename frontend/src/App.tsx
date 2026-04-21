@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ExceptionDetailPage } from "./pages/ExceptionDetailPage";
+import { OpsAnalyticsPage } from "./pages/OpsAnalyticsPage";
 
 function App() {
   return (
@@ -10,6 +11,7 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/dashboard/exception/:id" element={<ExceptionDetailPage />} />
+        <Route path="/analytics" element={<OpsAnalyticsPage />} />
       </Routes>
     </AppShell>
   );
