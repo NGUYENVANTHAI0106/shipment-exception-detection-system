@@ -27,6 +27,7 @@ services:
     restart: unless-stopped
 
   api:
+    profiles: ["fullstack"]
     build:
       context: ./backend
     env_file:
@@ -76,6 +77,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    profiles: ["fullstack"]
     build:
       context: ./frontend
     env_file:
