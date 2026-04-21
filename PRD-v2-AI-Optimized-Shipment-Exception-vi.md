@@ -649,11 +649,21 @@ Chi tiết endpoint HTTP (detector/classifier/notifier): Section 6 bản tiếng
 - [ ] Chốt slide, script demo 5-7 phút, README chạy nhanh.
 - [ ] Gate S5: Pass checklist tích hợp + demo mượt không fix nóng.
 
+**S6 — Hardening Web App (Auth + RBAC + Real Data)**
+- [ ] Bổ sung xác thực đăng nhập (`/auth/login`) và endpoint `/me` trả `role`.
+- [ ] Phân quyền 2 vai trò `ops` và `employee` ở cả frontend route guard và backend middleware.
+- [ ] Chuẩn hóa route theo vai trò: `/ops/*` và `/employee/*` (không truy cập chéo quyền).
+- [ ] Chuyển web sang dùng API thật 100% cho list/detail/update/escalate; chỉ giữ mock cho chế độ dev có cờ cấu hình riêng.
+- [ ] Bổ sung API role-aware: `GET /exceptions`, `GET /exceptions/:id`, `PATCH /exceptions/:id`, `POST /exceptions/:id/escalate`.
+- [ ] Ghi `audit_logs` đầy đủ theo actor (`ops_user`, `employee_user`, `system`) cho mọi thao tác từ web.
+- [ ] UAT theo vai trò: employee bị chặn thao tác nhạy cảm (escalate/update ngoài phạm vi), ops thao tác đầy đủ.
+- [ ] Gate S5.1: Không còn phụ thuộc mock trong luồng chính, pass test RBAC, và web ghi DB + audit đúng theo quyền.
+
 #### Mốc kiểm soát bắt buộc cuối mỗi ngày
 
 - **EOD Ngày 1:** Hoàn tất S1 + S2 (Member A done), có `exceptions` tạo tự động.
 - **EOD Ngày 2:** Hoàn tất S3 và tối thiểu 70% S4 (WF3 gửi được thông báo).
-- **EOD Ngày 3:** Hoàn tất S4 + S5, pass checklist tích hợp và demo.
+- **EOD Ngày 3:** Hoàn tất S4 + S5 + S5.1, pass checklist tích hợp, RBAC và demo.
 
 ### 10.5 Definition of Done (DoD) theo từng người
 

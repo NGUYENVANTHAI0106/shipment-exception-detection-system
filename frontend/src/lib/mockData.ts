@@ -45,28 +45,28 @@ export function getTimelineForException(exception: ExceptionItem): TimelineEvent
   const base = [
     {
       timestamp: exception.detected_at,
-      event: "Detected",
-      description: "System detected shipment exception from rule engine.",
+      event: "Phát hiện ngoại lệ",
+      description: "Hệ thống tự động phát hiện đơn hàng quá hạn giao.",
     },
     {
       timestamp: new Date(new Date(exception.detected_at).getTime() + 60 * 1000).toISOString(),
-      event: "Classified",
-      description: "Classifier enriched severity and suggested action.",
+      event: "Phân loại tự động",
+      description: "AI đánh giá mức độ và đề xuất hành động xử lý.",
     },
   ];
 
   if (exception.notified_at) {
     base.push({
       timestamp: exception.notified_at,
-      event: "Notified",
-      description: `Notification sent via ${(exception.channels_sent || []).join(", ") || "unknown channel"}.`,
+      event: "Gửi cảnh báo",
+      description: `Thông báo đã gửi qua ${(exception.channels_sent || []).join(", ") || "kênh chưa xác định"}.`,
     });
   }
 
   if (exception.resolution_note) {
     base.push({
       timestamp: new Date().toISOString(),
-      event: "Ops Note",
+      event: "Ghi chú vận hành",
       description: exception.resolution_note,
     });
   }

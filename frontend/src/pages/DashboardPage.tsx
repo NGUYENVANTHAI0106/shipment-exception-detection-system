@@ -16,9 +16,17 @@ function formatDate(dateStr: string) {
   });
 }
 
-export function DashboardPage() {
+function formatExceptionType(type: ExceptionType) {
+  if (type === "delay") return "Trễ hạn";
+  if (type === "failed_delivery") return "Giao thất bại";
+  if (type === "address_issue") return "Địa chỉ";
+  return "Kẹt";
+}
+
+export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" }) {
   const [items, setItems] = useState<ExceptionItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const [typeFilter, setTypeFilter] = useState<ExceptionType | "all">("all");
   const [carrierFilter, setCarrierFilter] = useState<string>("all");
@@ -27,10 +35,17 @@ export function DashboardPage() {
     let mounted = true;
 
     const runPoll = async () => {
-      const data = await listExceptions();
-      if (!mounted) return;
-      setItems(data);
-      setLoading(false);
+      try {
+        const data = await listExceptions();
+        if (!mounted) return;
+        setItems(data);
+        setError(null);
+      } catch (err) {
+        if (!mounted) return;
+        setError(err instanceof Error ? err.message : "Không tải được dữ liệu ngoại lệ.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
     };
 
     void runPoll();
@@ -109,6 +124,8 @@ export function DashboardPage() {
       <section className="card table-card fm-table-wrap">
         {loading ? (
           <p className="empty">Đang tải dữ liệu...</p>
+        ) : error ? (
+          <p className="empty">{error}</p>
         ) : filtered.length === 0 ? (
           <p className="empty">Không tìm thấy ngoại lệ phù hợp.</p>
         ) : (
@@ -132,7 +149,7 @@ export function DashboardPage() {
                   <td>
                     <SeverityBadge severity={item.severity} />
                   </td>
-                  <td>{item.exception_type}</td>
+                  <td>{formatExceptionType(item.exception_type)}</td>
                   <td>
                     <code>{item.tracking_number}</code>
                   </td>
@@ -153,7 +170,7 @@ export function DashboardPage() {
                   </td>
                   <td>{formatDate(item.detected_at)}</td>
                   <td>
-                    <Link to={`/dashboard/exception/${item.id}`} className="details-link">
+                    <Link to={`/${scope}/exception/${item.id}`} className="details-link">
                       Chi tiết →
                     </Link>
                   </td>
