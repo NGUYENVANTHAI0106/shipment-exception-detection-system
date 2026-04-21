@@ -42,10 +42,10 @@ from services.classifier.core import SYSTEM_PROMPT, build_user_prompt, classify_
 
 app = FastAPI(title="classifier-service", version="0.1.0")
 
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-CLAUDE_API_URL = os.getenv("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages")
-CLAUDE_TIMEOUT_SECONDS = int(os.getenv("CLAUDE_TIMEOUT_SECONDS", "12"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_API_URL = os.getenv("GEMINI_API_URL", "https://generativelanguage.googleapis.com/v1beta")
+GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "12"))
 
 
 class ClassifyRequest(BaseModel):
@@ -55,41 +55,49 @@ class ClassifyRequest(BaseModel):
     history_context: dict
 
 
-def call_claude_api(exception_data: dict, history: dict) -> str:
-    if not CLAUDE_API_KEY:
-        raise RuntimeError("missing_claude_api_key")
+def call_gemini_api(exception_data: dict, history: dict) -> str:
+    # Test hook: allows deterministic AI-success validation without external network.
+    mock_response = exception_data.get("_mock_gemini_response")
+    if isinstance(mock_response, str) and mock_response.strip():
+        return mock_response
+
+    if not GEMINI_API_KEY:
+        raise RuntimeError("missing_gemini_api_key")
 
     payload = {
-        "model": CLAUDE_MODEL,
-        "max_tokens": 300,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": build_user_prompt(exception_data, history)}],
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"parts": [{"text": build_user_prompt(exception_data, history)}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 300,
+        },
     }
+    endpoint = f"{GEMINI_API_URL}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     request = urllib.request.Request(
-        CLAUDE_API_URL,
+        endpoint,
         data=json.dumps(payload).encode("utf-8"),
         headers={
-            "x-api-key": CLAUDE_API_KEY,
-            "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=CLAUDE_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=GEMINI_TIMEOUT_SECONDS) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"claude_http_error:{exc.code}:{detail}") from exc
+        raise RuntimeError(f"gemini_http_error:{exc.code}:{detail}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"claude_network_error:{exc.reason}") from exc
+        raise RuntimeError(f"gemini_network_error:{exc.reason}") from exc
 
     data = json.loads(raw)
-    contents = data.get("content", [])
-    text_blocks = [item.get("text", "") for item in contents if item.get("type") == "text"]
-    if not text_blocks:
-        raise RuntimeError("claude_empty_content")
-    return text_blocks[0].strip()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise RuntimeError("gemini_empty_candidates")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    if not parts:
+        raise RuntimeError("gemini_empty_content")
+    return (parts[0].get("text") or "").strip()
 
 
 @app.post("/classify")
@@ -104,8 +112,8 @@ def classify(payload: ClassifyRequest) -> dict:
     classified = classify_with_fallback(
         exception_data=exception_data,
         history=history_context,
-        call_claude_api=call_claude_api,
-        model_name=CLAUDE_MODEL,
+        call_claude_api=call_gemini_api,
+        model_name=GEMINI_MODEL,
     )
     classified["classified_at"] = datetime.now(timezone.utc).isoformat()
     return classified
