@@ -25,7 +25,7 @@ def base_history() -> dict:
     }
 
 
-def fake_claude_success(_exception_data: dict, _history: dict) -> str:
+def fake_gemini_success(_exception_data: dict, _history: dict) -> str:
     return json.dumps(
         {
             "severity": "CRITICAL",
@@ -37,7 +37,7 @@ def fake_claude_success(_exception_data: dict, _history: dict) -> str:
     )
 
 
-def fake_claude_invalid_json(_exception_data: dict, _history: dict) -> str:
+def fake_gemini_invalid_json(_exception_data: dict, _history: dict) -> str:
     return "{invalid_json"
 
 
@@ -45,18 +45,18 @@ def run_smoke_tests() -> None:
     success = classify_with_fallback(
         exception_data=base_exception_data(),
         history=base_history(),
-        call_claude_api=fake_claude_success,
-        model_name="claude-haiku-4-5-20251001",
+        call_claude_api=fake_gemini_success,
+        model_name="gemini-1.5-flash",
     )
     assert success["fallback_used"] is False
     assert success["severity"] == "CRITICAL"
-    assert success["model_used"] == "claude-haiku-4-5-20251001"
+    assert success["model_used"] == "gemini-1.5-flash"
 
     fallback = classify_with_fallback(
         exception_data=base_exception_data(),
         history=base_history(),
-        call_claude_api=fake_claude_invalid_json,
-        model_name="claude-haiku-4-5-20251001",
+        call_claude_api=fake_gemini_invalid_json,
+        model_name="gemini-1.5-flash",
     )
     assert fallback["fallback_used"] is True
     assert fallback["severity"] == "HIGH"

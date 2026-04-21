@@ -76,7 +76,7 @@
   "confidence": 0.82,
   "fallback_used": false,
   "fallback_reason": null,
-  "model_used": "claude-haiku-4-5-20251001",
+  "model_used": "gemini-1.5-flash",
   "escalate_to_manager": false,
   "classified_at": "2026-04-21T03:31:20.000Z"
 }

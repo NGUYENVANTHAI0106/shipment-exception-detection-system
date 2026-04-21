@@ -77,6 +77,7 @@ class NotifyRequest(BaseModel):
     ai_suggestion: str = ""
     carrier: str = "unknown"
     is_already_notified: bool = False
+    dry_run: bool = False
 
 
 class EscalateRequest(BaseModel):
@@ -87,9 +88,12 @@ class EscalateRequest(BaseModel):
     overdue_hours: float = 0
     reason: str = ""
     carrier: str = "unknown"
+    dry_run: bool = False
 
 
-def _send_telegram(chat_id: str, message: str) -> str:
+def _send_telegram(chat_id: str, message: str, dry_run: bool = False) -> str:
+    if dry_run:
+        return "dry-run-telegram-message-id"
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("missing_telegram_bot_token")
     if not chat_id:
@@ -107,7 +111,9 @@ def _send_telegram(chat_id: str, message: str) -> str:
     return str(body["result"]["message_id"])
 
 
-def _send_email(to_address: str, subject: str, body: str) -> str:
+def _send_email(to_address: str, subject: str, body: str, dry_run: bool = False) -> str:
+    if dry_run:
+        return to_address or "dry-run@example.local"
     if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD):
         raise RuntimeError("missing_smtp_config")
     if not to_address:
@@ -155,7 +161,7 @@ def notify(payload: NotifyRequest) -> dict:
     if "telegram_ops" in decision.channels:
         try:
             telegram_message_id = _send_telegram(
-                TELEGRAM_OPS_CHAT_ID, build_ops_message(normalized)
+                TELEGRAM_OPS_CHAT_ID, build_ops_message(normalized), payload.dry_run
             )
             channels_sent.append("telegram_ops")
         except Exception:  # noqa: BLE001
@@ -164,7 +170,11 @@ def notify(payload: NotifyRequest) -> dict:
 
     if "telegram_manager" in decision.channels:
         try:
-            _send_telegram(TELEGRAM_MANAGER_CHAT_ID, build_manager_escalation_message(normalized))
+            _send_telegram(
+                TELEGRAM_MANAGER_CHAT_ID,
+                build_manager_escalation_message(normalized),
+                payload.dry_run,
+            )
             channels_sent.append("telegram_manager")
         except Exception:  # noqa: BLE001
             pass
@@ -180,6 +190,7 @@ def notify(payload: NotifyRequest) -> dict:
                         recipient,
                         f"[{normalized['severity']}] Shipment exception {payload.exception_id}",
                         f"Reason: {normalized.get('reason', '')}\nAction: {normalized.get('ai_suggestion', '')}",
+                        payload.dry_run,
                     )
                 )
             except Exception:  # noqa: BLE001
@@ -212,7 +223,7 @@ def escalate(payload: EscalateRequest) -> dict:
     data["severity"] = "CRITICAL"
     message = build_manager_escalation_message(data)
     try:
-        message_id = _send_telegram(TELEGRAM_MANAGER_CHAT_ID, message)
+        message_id = _send_telegram(TELEGRAM_MANAGER_CHAT_ID, message, payload.dry_run)
         channels = ["telegram_manager"]
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"escalate_failed:{exc}") from exc

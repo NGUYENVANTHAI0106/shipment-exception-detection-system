@@ -26,6 +26,33 @@ services:
       retries: 20
     restart: unless-stopped
 
+  classifier:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+      GEMINI_API_URL: ${GEMINI_API_URL:-https://generativelanguage.googleapis.com/v1beta}
+      GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-12}
+    command: ["uvicorn", "services.classifier.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+  notifier:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+    env_file:
+      - ./.env
+    command: ["uvicorn", "services.notifier.main:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+
   api:
     profiles: ["fullstack"]
     build:
