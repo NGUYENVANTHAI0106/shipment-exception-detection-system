@@ -657,13 +657,35 @@ Chi tiết endpoint HTTP (detector/classifier/notifier): Section 6 bản tiếng
 - [ ] Bổ sung API role-aware: `GET /exceptions`, `GET /exceptions/:id`, `PATCH /exceptions/:id`, `POST /exceptions/:id/escalate`.
 - [ ] Ghi `audit_logs` đầy đủ theo actor (`ops_user`, `employee_user`, `system`) cho mọi thao tác từ web.
 - [ ] UAT theo vai trò: employee bị chặn thao tác nhạy cảm (escalate/update ngoài phạm vi), ops thao tác đầy đủ.
-- [ ] Gate S5.1: Không còn phụ thuộc mock trong luồng chính, pass test RBAC, và web ghi DB + audit đúng theo quyền.
+- [ ] Gate S6: Không còn phụ thuộc mock trong luồng chính, pass test RBAC, và web ghi DB + audit đúng theo quyền.
+
+**S7 — Ops Workflow nâng cao (Ownership + SLA + Queue)**
+- [ ] Bổ sung ownership cho `exceptions`: `assignee`, `assigned_at`, `assigned_team` (hoặc bảng assignment riêng nếu muốn mở rộng lịch sử phân công).
+- [ ] Thêm thao tác UI/API cho nhân viên: `Nhận xử lý`, `Chuyển người xử lý`, `Yêu cầu quản lý hỗ trợ` (thay wording "leo thang quản lý").
+- [ ] Chuẩn hóa trạng thái nghiệp vụ 2 tầng: `open` → `in_progress` → `waiting_manager_review` → (`resolved` hoặc `returned_to_ops`).
+- [ ] Bổ sung SLA policy theo severity (`deadline_at`, `sla_breached`) và job kiểm tra định kỳ để đánh dấu quá hạn.
+- [ ] Ưu tiên danh sách theo SLA/time: sort `deadline_at`/`detected_at` thay vì chỉ severity; thêm badge "Sắp quá hạn"/"Quá hạn".
+- [ ] Thêm bộ lọc vận hành: `Tôi phụ trách`, `Chưa nhận`, `Chờ quản lý`, `Quá SLA`.
+- [ ] Bổ sung bulk actions: nhận xử lý hàng loạt, đổi trạng thái hàng loạt, gửi yêu cầu quản lý hàng loạt.
+- [ ] Mọi action ghi `audit_logs` chi tiết old/new value + actor.
+- [ ] Gate S7: Nhân viên có thể nhận case, cập nhật tiến độ, gửi yêu cầu quản lý; dashboard hiển thị hàng đợi đúng ownership + SLA.
+
+**S8 — Manager Review Flow + Analytics vận hành**
+- [ ] Tạo màn `Manager Queue`: tab `Chờ duyệt`, `Đã trả lại`, `Đã chốt`, ưu tiên case `CRITICAL` và case quá SLA.
+- [ ] Bổ sung action quản lý: `Tiếp nhận duyệt`, `Trả lại cho vận hành`, `Phê duyệt đóng case` (ghi lý do bắt buộc).
+- [ ] Bổ sung API manager-only cho review flow và phân quyền RBAC tương ứng.
+- [ ] Hoàn thiện timeline/audit trong trang chi tiết: hiển thị đầy đủ sự kiện phân công, yêu cầu quản lý hỗ trợ, duyệt/trả lại/chốt.
+- [ ] Bổ sung KPI thực chiến: MTTA, MTTR, tỷ lệ breach SLA, tỷ lệ case phải nhờ quản lý hỗ trợ, tồn đọng theo người phụ trách.
+- [ ] Thêm cảnh báo chủ động: notify quản lý khi case `waiting_manager_review` quá N phút chưa tiếp nhận.
+- [ ] Viết UAT e2e cho luồng 2 tầng: employee xử lý → yêu cầu quản lý hỗ trợ → manager duyệt/trả lại → close.
+- [ ] Gate S8: Có luồng vận hành production-like 2 tầng đầy đủ (ownership + SLA + review + KPI), demo được bằng dữ liệu thật.
 
 #### Mốc kiểm soát bắt buộc cuối mỗi ngày
 
 - **EOD Ngày 1:** Hoàn tất S1 + S2 (Member A done), có `exceptions` tạo tự động.
 - **EOD Ngày 2:** Hoàn tất S3 và tối thiểu 70% S4 (WF3 gửi được thông báo).
-- **EOD Ngày 3:** Hoàn tất S4 + S5 + S5.1, pass checklist tích hợp, RBAC và demo.
+- **EOD Ngày 3:** Hoàn tất S4 + S5 + S6, pass checklist tích hợp, RBAC và demo.
+- **Mốc mở rộng sau demo:** Hoàn tất S7 rồi S8 theo đúng thứ tự (không chạy song song) để nâng hệ thống lên mức production-like.
 
 ### 10.5 Definition of Done (DoD) theo từng người
 

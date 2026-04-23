@@ -1,5 +1,5 @@
 import type { ExceptionItem } from "../types";
-import { getAuthRole, getAuthToken } from "../auth";
+import { getAuthToken } from "../auth";
 import { mockExceptions } from "./mockData";
 
 const STORAGE_KEY = "ops_exceptions_local";
@@ -28,10 +28,6 @@ async function safeFetch<T>(url: string, options?: RequestInit): Promise<T | nul
   }
 }
 
-function getRolePrefix(): "ops" | "employee" {
-  return getAuthRole() === "employee" ? "employee" : "ops";
-}
-
 function withAuthHeaders(options?: RequestInit): RequestInit {
   const token = getAuthToken();
   const headers = new Headers(options?.headers ?? {});
@@ -40,10 +36,9 @@ function withAuthHeaders(options?: RequestInit): RequestInit {
 }
 
 export async function listExceptions(): Promise<ExceptionItem[]> {
-  const prefix = getRolePrefix();
   const apiData = await safeFetch<ExceptionItem[]>(
-    `/api/${prefix}/exceptions`,
-    withAuthHeaders(),
+    `/api/exceptions?ts=${Date.now()}`,
+    withAuthHeaders({ cache: "no-store" }),
   );
   if (apiData) return apiData;
   if (USE_MOCK_DATA) return readLocal();
@@ -51,10 +46,9 @@ export async function listExceptions(): Promise<ExceptionItem[]> {
 }
 
 export async function getExceptionById(id: string): Promise<ExceptionItem | null> {
-  const prefix = getRolePrefix();
   const apiData = await safeFetch<ExceptionItem>(
-    `/api/${prefix}/exceptions/${id}`,
-    withAuthHeaders(),
+    `/api/exceptions/${id}?ts=${Date.now()}`,
+    withAuthHeaders({ cache: "no-store" }),
   );
   if (apiData) return apiData;
   if (USE_MOCK_DATA) return readLocal().find((item) => item.id === id) ?? null;
@@ -65,9 +59,8 @@ export async function updateException(
   id: string,
   patch: Partial<Pick<ExceptionItem, "status" | "resolution_note">>,
 ): Promise<ExceptionItem | null> {
-  const prefix = getRolePrefix();
   const apiData = await safeFetch<ExceptionItem>(
-    `/api/${prefix}/exceptions/${id}`,
+    `/api/exceptions/${id}`,
     withAuthHeaders({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -89,9 +82,8 @@ export async function updateException(
 }
 
 export async function manualEscalate(id: string): Promise<boolean> {
-  const prefix = getRolePrefix();
   const apiSuccess = await safeFetch<{ success: boolean }>(
-    `/api/${prefix}/exceptions/${id}/escalate`,
+    `/api/exceptions/${id}/escalate`,
     withAuthHeaders({ method: "POST" }),
   );
   if (apiSuccess?.success) return true;

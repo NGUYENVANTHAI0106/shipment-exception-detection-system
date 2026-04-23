@@ -1,0 +1,425 @@
+{
+  "name": "WF1",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO shipments (\n  id, tracking_number, carrier, origin, destination,\n  expected_delivery, actual_delivery, status, failed_attempts, last_updated, created_at\n)\nVALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)\nON CONFLICT (tracking_number) DO UPDATE SET\n  carrier = EXCLUDED.carrier,\n  origin = EXCLUDED.origin,\n  destination = EXCLUDED.destination,\n  expected_delivery = EXCLUDED.expected_delivery,\n  actual_delivery = EXCLUDED.actual_delivery,\n  status = EXCLUDED.status,\n  failed_attempts = EXCLUDED.failed_attempts,\n  last_updated = EXCLUDED.last_updated\nRETURNING id, tracking_number;",
+        "options": {
+          "queryReplacement": "={{[\n  $json.shipment.id,\n  $json.shipment.tracking_number,\n  $json.shipment.carrier,\n  $json.shipment.origin,\n  $json.shipment.destination,\n  $json.shipment.expected_delivery,\n  $json.shipment.actual_delivery,\n  $json.shipment.status,\n  $json.shipment.failed_attempts ?? 0,\n  $json.shipment.last_updated,\n  $json.shipment.created_at ?? $now.toISO()\n]}}"
+        }
+      },
+      "id": "40dc9346-236c-4582-85a3-c3d7b1339c6a",
+      "name": "Upsert Shipment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3536,
+        1024
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "54c5b0bc-e52a-4963-b83f-6b23fff71c97",
+      "name": "Schedule Trigger1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2848,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://mock-data:8004/shipments?count=30&exception_ratio=0.4",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "count",
+              "value": "30"
+            },
+            {
+              "name": "exception_ratio",
+              "value": "0.4"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "ce2f01fa-f39c-4fe4-8ea9-d3d59a86211b",
+      "name": "Get Shipments1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3072,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const required = [\"id\", \"tracking_number\", \"carrier\", \"destination\", \"status\", \"expected_delivery\", \"last_updated\"];\nconst items = $json.items || [];\nconst valid = items.filter((s) => required.every((f) => s[f] !== undefined && s[f] !== null));\nreturn valid.map((shipment) => ({ json: { shipment } }));"
+      },
+      "id": "9aeb5139-4738-4a68-a041-4315b73bdf80",
+      "name": "Validate Shipment Fields1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3312,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "dedup_value",
+        "key": "={{'processed:' + $node[\"Validate Shipment Fields1\"].json.shipment.tracking_number}}",
+        "options": {}
+      },
+      "id": "add2305c-1066-4215-ae74-66d5d97fb8b0",
+      "name": "Redis Dedup Get1",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3680,
+        1024
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "redis": {
+          "id": "5hBcdEnfLY0XblVG",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cache-hit",
+              "leftValue": "={{$json.dedup_value}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "686ff244-b45b-43cc-96e7-67bf8780db38",
+      "name": "IF Cache Hit1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3936,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-exception",
+              "leftValue": "={{$json.is_exception}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "is-not-skipped",
+              "leftValue": "={{$json.skipped}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cf5faa77-dcf4-4251-9532-6ec27f21b153",
+      "name": "IF Exception and Not Skipped1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4448,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{'processed:' + $node[\"Validate Shipment Fields1\"].json.shipment.tracking_number}}",
+        "value": "1",
+        "expire": true,
+        "ttl": 3600
+      },
+      "id": "4d9f4b2a-bec3-4a1d-9992-bd0abff08a9f",
+      "name": "Redis Dedup Set TTL1",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        4672,
+        1024
+      ],
+      "credentials": {
+        "redis": {
+          "id": "5hBcdEnfLY0XblVG",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const upsert = $('Upsert Shipment').item.json || {};\nreturn [{\n  json: {\n    shipment_id: upsert.id || $json.shipment_id,\n    tracking_number: upsert.tracking_number || $('Validate Shipment Fields1').item.json.shipment.tracking_number,\n    exception_type: $json.exception_type,\n    reason: $json.reason,\n    severity_hint: $json.severity_hint,\n    overdue_hours: $json.overdue_hours || 0,\n    status: 'open',\n    detected_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "fc435e46-e79f-4405-b8b8-4361eae6ef52",
+      "name": "Set Exception Payload1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4896,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO exceptions (\n  shipment_id, exception_type, reason, severity_hint, overdue_hours, status, detected_at\n)\nVALUES ($1, $2, $3, $4, $5, $6, $7)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{[\n  $json.shipment_id ?? $json.shipment?.id,\n  $json.exception_type,\n  $json.reason,\n  $json.severity_hint,\n  $json.overdue_hours ?? 0,\n  $json.status ?? 'open',\n  $json.detected_at ?? $now.toISO()\n]}}"
+        }
+      },
+      "id": "a05c28ee-a264-4ca5-b298-b366ad028e7f",
+      "name": "Postgres Insert Exception1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        5120,
+        1024
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n:5678/webhook/wf2-classify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { exception_id: $json.id } }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "a5464e2c-e7c5-4378-a9ad-61257b2eed83",
+      "name": "Trigger WF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5344,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://detector:8001/detect",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { shipment: $node[\"Validate Shipment Fields1\"].json.shipment } }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "103dbf12-b1e6-4736-85e9-b8ee7870209f",
+      "name": "Call Detector1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4224,
+        1024
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upsert Shipment": {
+      "main": [
+        [
+          {
+            "node": "Redis Dedup Get1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Get Shipments1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Shipments1": {
+      "main": [
+        [
+          {
+            "node": "Validate Shipment Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Shipment Fields1": {
+      "main": [
+        [
+          {
+            "node": "Upsert Shipment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Dedup Get1": {
+      "main": [
+        [
+          {
+            "node": "IF Cache Hit1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Cache Hit1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Call Detector1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Exception and Not Skipped1": {
+      "main": [
+        [
+          {
+            "node": "Redis Dedup Set TTL1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Dedup Set TTL1": {
+      "main": [
+        [
+          {
+            "node": "Set Exception Payload1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Exception Payload1": {
+      "main": [
+        [
+          {
+            "node": "Postgres Insert Exception1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Insert Exception1": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Detector1": {
+      "main": [
+        [
+          {
+            "node": "IF Exception and Not Skipped1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "1deba060-25e0-480e-8c89-724fa8aada0d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f1640d3210347b2677795f0a19ba15676844041479642c445388c5a4a858d18"
+  },
+  "id": "yIyPUQmbmay9DLDYiyfql",
+  "tags": []
+}

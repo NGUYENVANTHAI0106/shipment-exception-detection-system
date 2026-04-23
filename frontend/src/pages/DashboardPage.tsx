@@ -1,5 +1,5 @@
 import { ArrowRight, Clock3, Filter } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
@@ -27,19 +27,27 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
   const [items, setItems] = useState<ExceptionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const [typeFilter, setTypeFilter] = useState<ExceptionType | "all">("all");
   const [carrierFilter, setCarrierFilter] = useState<string>("all");
+  const pollSeqRef = useRef(0);
+  const appliedSeqRef = useRef(0);
 
   useEffect(() => {
     let mounted = true;
 
     const runPoll = async () => {
+      const seq = ++pollSeqRef.current;
       try {
         const data = await listExceptions();
         if (!mounted) return;
+        // Ignore stale responses when multiple poll requests overlap.
+        if (seq < appliedSeqRef.current) return;
+        appliedSeqRef.current = seq;
         setItems(data);
         setError(null);
+        setLastSyncedAt(new Date().toISOString());
       } catch (err) {
         if (!mounted) return;
         setError(err instanceof Error ? err.message : "Không tải được dữ liệu ngoại lệ.");
@@ -70,7 +78,11 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
       .filter((it) => severityFilter === "all" || it.severity === severityFilter)
       .filter((it) => typeFilter === "all" || it.exception_type === typeFilter)
       .filter((it) => carrierFilter === "all" || it.carrier === carrierFilter)
-      .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+      .sort((a, b) => {
+        const detectedDelta = new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime();
+        if (detectedDelta !== 0) return detectedDelta;
+        return severityOrder[a.severity] - severityOrder[b.severity];
+      });
   }, [items, severityFilter, typeFilter, carrierFilter]);
 
   return (
@@ -78,6 +90,11 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
       <header className="page-header fm-page-head">
         <h1>Danh sách ngoại lệ</h1>
         <p>Theo dõi và xử lý các đơn vận chuyển có vấn đề</p>
+        {!loading && (
+          <small>
+            Đồng bộ: {lastSyncedAt ? formatDate(lastSyncedAt) : "--"} • Tổng API: {items.length}
+          </small>
+        )}
       </header>
 
       <section className="card fm-filter-card">
