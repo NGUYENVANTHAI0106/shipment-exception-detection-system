@@ -13,9 +13,10 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
+import { useAuth } from "../auth";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
-import { getExceptionById, manualEscalate, updateException } from "../lib/exceptionService";
+import { assignException, claimException, getExceptionById, manualEscalate, updateException } from "../lib/exceptionService";
 import { getTimelineForException } from "../lib/mockData";
 import type { ExceptionItem, ExceptionStatus } from "../types";
 
@@ -39,11 +40,15 @@ function formatExceptionType(type: ExceptionItem["exception_type"]) {
 export function ExceptionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
+  const { user } = useAuth();
   const scope: "ops" | "employee" = location.pathname.startsWith("/employee/") ? "employee" : "ops";
-  const isReadOnly = scope === "employee";
+  const canTransfer = scope === "ops";
+  const canRequestSupport = scope === "ops" || scope === "employee";
   const [item, setItem] = useState<ExceptionItem | null>(null);
   const [status, setStatus] = useState<ExceptionStatus>("open");
   const [note, setNote] = useState("");
+  const [assignee, setAssignee] = useState("");
+  const [assignedTeam, setAssignedTeam] = useState("ops");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -55,6 +60,8 @@ export function ExceptionDetailPage() {
         setItem(found);
         setStatus(found.status);
         setNote(found.resolution_note || "");
+        setAssignee(found.assignee || "");
+        setAssignedTeam(found.assigned_team || "ops");
       })
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : "Không tải được chi tiết ngoại lệ.");
@@ -107,10 +114,49 @@ export function ExceptionDetailPage() {
       const refreshed = await getExceptionById(item.id);
       if (refreshed) setItem(refreshed);
       setSaving(false);
-      setMessage("Đã leo thang tới quản lý.");
+      setMessage("Đã gửi yêu cầu quản lý hỗ trợ.");
     } catch (err) {
       setSaving(false);
       setMessage(err instanceof Error ? err.message : "Leo thang thất bại.");
+    }
+  };
+
+  const handleClaim = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await claimException(item.id);
+      if (updated) {
+        setItem(updated);
+        setStatus(updated.status);
+        setAssignee(updated.assignee || "");
+      }
+      setMessage("Đã nhận xử lý ngoại lệ.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Nhận xử lý thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAssign = async () => {
+    if (!assignee.trim()) {
+      setMessage("Vui lòng nhập người xử lý.");
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await assignException(item.id, { assignee: assignee.trim(), assigned_team: assignedTeam });
+      if (updated) {
+        setItem(updated);
+        setStatus(updated.status);
+      }
+      setMessage("Đã chuyển người xử lý.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Chuyển người xử lý thất bại.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -242,6 +288,8 @@ export function ExceptionDetailPage() {
                 <option value="open">Mở</option>
                 <option value="notified">Đã thông báo</option>
                 <option value="in_progress">Đang xử lý</option>
+                <option value="waiting_manager_review">Chờ quản lý xử lý</option>
+                <option value="returned_to_ops">Trả lại vận hành</option>
                 <option value="resolved">Đã xử lý</option>
               </select>
             </label>
@@ -256,21 +304,42 @@ export function ExceptionDetailPage() {
               />
             </label>
 
-            {!isReadOnly && (
-              <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleSave}>
-                <Save size={16} />
-                Lưu thay đổi
-              </button>
+            <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleClaim}>
+              Nhận xử lý
+            </button>
+
+            <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleSave}>
+              <Save size={16} />
+              Lưu thay đổi
+            </button>
+
+            {canTransfer && (
+              <>
+                <label className="fm-field">
+                  Chuyển người xử lý
+                  <input value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="Ví dụ: employee" />
+                </label>
+                <label className="fm-field">
+                  Nhóm xử lý
+                  <input value={assignedTeam} onChange={(e) => setAssignedTeam(e.target.value)} placeholder="ops" />
+                </label>
+                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleAssign}>
+                  Chuyển người xử lý
+                </button>
+              </>
             )}
 
-            {!isReadOnly && (
+            {canRequestSupport && (
               <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleEscalate}>
                 <Siren size={16} />
-                Leo thang quản lý
+                Yêu cầu quản lý hỗ trợ
               </button>
             )}
 
-            {isReadOnly && <p className="inline-message">Vai trò nhân viên chỉ có quyền theo dõi, không được cập nhật.</p>}
+            <p className="inline-message">
+              Người phụ trách hiện tại: <strong>{item.assignee || "Chưa có"}</strong>
+              {user?.username ? ` • Bạn: ${user.username}` : ""}
+            </p>
 
             {message && <p className="inline-message">{message}</p>}
           </section>
