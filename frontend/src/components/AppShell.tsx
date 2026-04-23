@@ -5,7 +5,8 @@ import { useAuth } from "../auth";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { user, logout } = useAuth();
-  const scope: "ops" | "employee" = user?.role === "employee" ? "employee" : "ops";
+  const scope: "ops" | "employee" | "manager" =
+    user?.role === "employee" ? "employee" : user?.role === "manager" ? "manager" : "ops";
   const isActive = (path: string) => {
     if (path === `/${scope}/dashboard`) {
       return location.pathname === "/" || location.pathname.startsWith(`/${scope}/dashboard`);
@@ -26,7 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="sidebar-nav">
           <Link to={`/${scope}/dashboard`} className={`nav-item ${isActive(`/${scope}/dashboard`) ? "active" : ""}`}>
             <Package size={16} />
-            Ngoại lệ
+            {scope === "manager" ? "Manager Queue" : "Ngoại lệ"}
           </Link>
           {scope === "ops" && (
             <Link to="/ops/analytics" className={`nav-item ${isActive("/ops/analytics") ? "active" : ""}`}>
@@ -50,7 +51,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="user-wrap">
             <div>
               <strong>{user?.display_name || "Người dùng"}</strong>
-              <small>{scope === "ops" ? "Vận hành" : "Nhân viên"}</small>
+              <small>{scope === "ops" ? "Vận hành" : scope === "manager" ? "Quản lý" : "Nhân viên"}</small>
             </div>
             <span className="avatar">
               <User size={15} />

@@ -16,8 +16,17 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
-import { assignException, claimException, getExceptionById, manualEscalate, updateException } from "../lib/exceptionService";
-import { getTimelineForException } from "../lib/mockData";
+import {
+  assignException,
+  claimException,
+  getExceptionById,
+  listAuditLogs,
+  managerAcceptReview,
+  managerApproveClose,
+  managerReturnToOps,
+  manualEscalate,
+  updateException,
+} from "../lib/exceptionService";
 import type { ExceptionItem, ExceptionStatus } from "../types";
 
 function formatDate(dateStr: string) {
@@ -41,28 +50,66 @@ export function ExceptionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const { user } = useAuth();
-  const scope: "ops" | "employee" = location.pathname.startsWith("/employee/") ? "employee" : "ops";
+  const scope: "ops" | "employee" | "manager" = location.pathname.startsWith("/employee/")
+    ? "employee"
+    : location.pathname.startsWith("/manager/")
+      ? "manager"
+      : "ops";
   const canTransfer = scope === "ops";
   const canRequestSupport = scope === "ops" || scope === "employee";
+  const isManager = scope === "manager";
+  const canStandardActions = !isManager;
   const [item, setItem] = useState<ExceptionItem | null>(null);
   const [status, setStatus] = useState<ExceptionStatus>("open");
   const [note, setNote] = useState("");
   const [assignee, setAssignee] = useState("");
   const [assignedTeam, setAssignedTeam] = useState("ops");
+  const [managerReason, setManagerReason] = useState("");
+  const [auditEvents, setAuditEvents] = useState<Array<{ timestamp: string; event: string; description: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const actionLabel: Record<string, string> = {
+    detected: "Phát hiện ngoại lệ",
+    classified: "Phân loại tự động",
+    notified: "Gửi cảnh báo",
+    escalated: "Leo thang hệ thống",
+    claimed_from_web: "Nhận xử lý",
+    assigned_from_web: "Chuyển người xử lý",
+    requested_manager_support_from_web: "Yêu cầu quản lý hỗ trợ",
+    updated_from_web: "Cập nhật từ web",
+    manager_in_progress: "Quản lý tiếp nhận duyệt",
+    manager_returned_to_ops: "Quản lý trả lại vận hành",
+    manager_resolved: "Quản lý phê duyệt đóng",
+    view_detail: "Xem chi tiết",
+  };
+
+  const refreshData = async (exceptionId: string) => {
+    const [detail, audits] = await Promise.all([getExceptionById(exceptionId), listAuditLogs(exceptionId)]);
+    if (detail) {
+      setItem(detail);
+      setStatus(detail.status);
+      setNote(detail.resolution_note || "");
+      setAssignee(detail.assignee || "");
+      setAssignedTeam(detail.assigned_team || "ops");
+    }
+    setAuditEvents(
+      audits.map((log) => {
+        const meta = log.metadata || {};
+        const reason = typeof meta.reason === "string" ? meta.reason : "";
+        const actor = log.actor || "system";
+        return {
+          timestamp: log.created_at,
+          event: actionLabel[log.action] || log.action,
+          description: reason ? `${reason} (actor: ${actor})` : `Actor: ${actor}`,
+        };
+      }),
+    );
+  };
+
   useEffect(() => {
     if (!id) return;
-    getExceptionById(id)
-      .then((found) => {
-        if (!found) return;
-        setItem(found);
-        setStatus(found.status);
-        setNote(found.resolution_note || "");
-        setAssignee(found.assignee || "");
-        setAssignedTeam(found.assigned_team || "ops");
-      })
+    refreshData(id)
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : "Không tải được chi tiết ngoại lệ.");
       });
@@ -81,8 +128,6 @@ export function ExceptionDetailPage() {
     );
   }
 
-  const timeline = getTimelineForException({ ...item, status, resolution_note: note });
-
   const handleSave = async () => {
     setSaving(true);
     setMessage(null);
@@ -94,6 +139,7 @@ export function ExceptionDetailPage() {
         return;
       }
       setItem(updated);
+      await refreshData(item.id);
       setMessage("Đã lưu trạng thái và ghi chú xử lý.");
     } catch (err) {
       setSaving(false);
@@ -113,6 +159,7 @@ export function ExceptionDetailPage() {
       }
       const refreshed = await getExceptionById(item.id);
       if (refreshed) setItem(refreshed);
+      await refreshData(item.id);
       setSaving(false);
       setMessage("Đã gửi yêu cầu quản lý hỗ trợ.");
     } catch (err) {
@@ -131,6 +178,7 @@ export function ExceptionDetailPage() {
         setStatus(updated.status);
         setAssignee(updated.assignee || "");
       }
+      await refreshData(item.id);
       setMessage("Đã nhận xử lý ngoại lệ.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Nhận xử lý thất bại.");
@@ -152,9 +200,45 @@ export function ExceptionDetailPage() {
         setItem(updated);
         setStatus(updated.status);
       }
+      await refreshData(item.id);
       setMessage("Đã chuyển người xử lý.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Chuyển người xử lý thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runManagerAction = async (mode: "accept" | "return" | "approve") => {
+    if (!managerReason.trim()) {
+      setMessage("Vui lòng nhập lý do bắt buộc cho thao tác quản lý.");
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const action =
+        mode === "accept"
+          ? managerAcceptReview
+          : mode === "return"
+            ? managerReturnToOps
+            : managerApproveClose;
+      const updated = await action(item.id, managerReason.trim());
+      if (updated) {
+        setItem(updated);
+        setStatus(updated.status);
+      }
+      await refreshData(item.id);
+      setManagerReason("");
+      setMessage(
+        mode === "accept"
+          ? "Quản lý đã tiếp nhận duyệt."
+          : mode === "return"
+            ? "Quản lý đã trả case lại vận hành."
+            : "Quản lý đã phê duyệt đóng case.",
+      );
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Thao tác quản lý thất bại.");
     } finally {
       setSaving(false);
     }
@@ -265,16 +349,20 @@ export function ExceptionDetailPage() {
               Lịch sử xử lý
             </h2>
             <div className="fm-timeline">
-              {timeline.map((event, idx) => (
-                <div key={`${event.timestamp}-${idx}`} className="fm-timeline-item">
-                  <div className="fm-timeline-dot" />
-                  <div>
-                    <strong className="fm-timeline-title">{event.event}</strong>
-                    <p>{event.description}</p>
-                    <small>{formatDate(event.timestamp)}</small>
+              {auditEvents.length === 0 ? (
+                <p className="empty">Chưa có lịch sử thao tác.</p>
+              ) : (
+                auditEvents.map((event, idx) => (
+                  <div key={`${event.timestamp}-${idx}`} className="fm-timeline-item">
+                    <div className="fm-timeline-dot" />
+                    <div>
+                      <strong className="fm-timeline-title">{event.event}</strong>
+                      <p>{event.description}</p>
+                      <small>{formatDate(event.timestamp)}</small>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </section>
         </div>
@@ -304,14 +392,18 @@ export function ExceptionDetailPage() {
               />
             </label>
 
-            <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleClaim}>
-              Nhận xử lý
-            </button>
+            {canStandardActions && (
+              <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleClaim}>
+                Nhận xử lý
+              </button>
+            )}
 
-            <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleSave}>
-              <Save size={16} />
-              Lưu thay đổi
-            </button>
+            {canStandardActions && (
+              <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleSave}>
+                <Save size={16} />
+                Lưu thay đổi
+              </button>
+            )}
 
             {canTransfer && (
               <>
@@ -334,6 +426,29 @@ export function ExceptionDetailPage() {
                 <Siren size={16} />
                 Yêu cầu quản lý hỗ trợ
               </button>
+            )}
+
+            {isManager && (
+              <>
+                <label className="fm-field">
+                  Lý do duyệt (bắt buộc)
+                  <textarea
+                    rows={4}
+                    value={managerReason}
+                    onChange={(e) => setManagerReason(e.target.value)}
+                    placeholder="Nhập lý do tiếp nhận/trả lại/phê duyệt đóng..."
+                  />
+                </label>
+                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={() => void runManagerAction("accept")}>
+                  Tiếp nhận duyệt
+                </button>
+                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={() => void runManagerAction("return")}>
+                  Trả lại cho vận hành
+                </button>
+                <button className="btn btn-primary fm-btn" disabled={saving} onClick={() => void runManagerAction("approve")}>
+                  Phê duyệt đóng case
+                </button>
+              </>
             )}
 
             <p className="inline-message">

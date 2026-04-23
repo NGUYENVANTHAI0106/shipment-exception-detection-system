@@ -5,6 +5,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EmployeeDashboardPage } from "./pages/EmployeeDashboardPage";
 import { ExceptionDetailPage } from "./pages/ExceptionDetailPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ManagerQueuePage } from "./pages/ManagerQueuePage";
 import { OpsAnalyticsPage } from "./pages/OpsAnalyticsPage";
 
 function RequireAuth({ role }: { role?: UserRole }) {
@@ -12,7 +13,9 @@ function RequireAuth({ role }: { role?: UserRole }) {
   if (!ready) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (role && user.role !== role) {
-    return <Navigate to={user.role === "ops" ? "/ops/dashboard" : "/employee/dashboard"} replace />;
+    if (user.role === "ops") return <Navigate to="/ops/dashboard" replace />;
+    if (user.role === "manager") return <Navigate to="/manager/dashboard" replace />;
+    return <Navigate to="/employee/dashboard" replace />;
   }
   return <Outlet />;
 }
@@ -20,7 +23,9 @@ function RequireAuth({ role }: { role?: UserRole }) {
 function RootRedirect() {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === "ops" ? "/ops/dashboard" : "/employee/dashboard"} replace />;
+  if (user.role === "ops") return <Navigate to="/ops/dashboard" replace />;
+  if (user.role === "manager") return <Navigate to="/manager/dashboard" replace />;
+  return <Navigate to="/employee/dashboard" replace />;
 }
 
 function AppShellLayout() {
@@ -46,6 +51,10 @@ function App() {
           <Route element={<RequireAuth role="employee" />}>
             <Route path="/employee/dashboard" element={<EmployeeDashboardPage />} />
             <Route path="/employee/exception/:id" element={<ExceptionDetailPage />} />
+          </Route>
+          <Route element={<RequireAuth role="manager" />}>
+            <Route path="/manager/dashboard" element={<ManagerQueuePage />} />
+            <Route path="/manager/exception/:id" element={<ExceptionDetailPage />} />
           </Route>
         </Route>
       </Route>

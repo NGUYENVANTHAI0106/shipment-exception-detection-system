@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-export type UserRole = "ops" | "employee";
+export type UserRole = "ops" | "employee" | "manager";
 
 interface AuthUser {
   username: string;
