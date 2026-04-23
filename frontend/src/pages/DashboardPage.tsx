@@ -23,6 +23,15 @@ function formatExceptionType(type: ExceptionType) {
   return "Kẹt";
 }
 
+function getSlaLabel(item: ExceptionItem): { text: string; className: string } {
+  if (item.sla_breached) return { text: "Quá hạn SLA", className: "status-sla-breached" };
+  if (!item.deadline_at) return { text: "Chưa có SLA", className: "status-sla-unknown" };
+  const remainMs = new Date(item.deadline_at).getTime() - Date.now();
+  if (remainMs <= 0) return { text: "Quá hạn SLA", className: "status-sla-breached" };
+  if (remainMs <= 2 * 3600 * 1000) return { text: "Sắp quá hạn", className: "status-sla-warning" };
+  return { text: "Trong SLA", className: "status-sla-ok" };
+}
+
 export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" }) {
   const [items, setItems] = useState<ExceptionItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +88,9 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
       .filter((it) => typeFilter === "all" || it.exception_type === typeFilter)
       .filter((it) => carrierFilter === "all" || it.carrier === carrierFilter)
       .sort((a, b) => {
+        const aDeadline = a.deadline_at ? new Date(a.deadline_at).getTime() : Number.POSITIVE_INFINITY;
+        const bDeadline = b.deadline_at ? new Date(b.deadline_at).getTime() : Number.POSITIVE_INFINITY;
+        if (aDeadline !== bDeadline) return aDeadline - bDeadline;
         const detectedDelta = new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime();
         if (detectedDelta !== 0) return detectedDelta;
         return severityOrder[a.severity] - severityOrder[b.severity];
@@ -156,13 +168,16 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
                 <th>Tuyến</th>
                 <th>Quá hạn</th>
                 <th>Trạng thái</th>
+                <th>SLA</th>
                 <th>Phát hiện</th>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {filtered.map((item) => (
-                <tr key={item.id} className={item.severity === "CRITICAL" ? "critical-row" : ""}>
+              {filtered.map((item) => {
+                const sla = getSlaLabel(item);
+                return (
+                  <tr key={item.id} className={item.severity === "CRITICAL" ? "critical-row" : ""}>
                   <td>
                     <SeverityBadge severity={item.severity} />
                   </td>
@@ -185,19 +200,23 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
                   <td>
                     <StatusBadge status={item.status} />
                   </td>
+                  <td>
+                    <span className={`status-pill ${sla.className}`}>{sla.text}</span>
+                  </td>
                   <td>{formatDate(item.detected_at)}</td>
                   <td>
                     <Link to={`/${scope}/exception/${item.id}`} className="details-link">
                       Chi tiết →
                     </Link>
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
         {!loading && filtered.length > 0 && (
-          <div className="fm-table-foot">Hiển thị {filtered.length} ngoại lệ • Ưu tiên CRITICAL trên cùng</div>
+          <div className="fm-table-foot">Hiển thị {filtered.length} ngoại lệ • Ưu tiên theo SLA và thời điểm phát hiện</div>
         )}
       </section>
     </div>

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -38,6 +40,13 @@ class LoginRequest(BaseModel):
 class ExceptionPatchRequest(BaseModel):
     status: str | None = None
     resolution_note: str | None = None
+    assignee: str | None = None
+    assigned_team: str | None = None
+
+
+class AssignExceptionRequest(BaseModel):
+    assignee: str
+    assigned_team: str | None = None
 
 
 USERS = {
@@ -45,8 +54,47 @@ USERS = {
     "employee": {"password": "employee123", "role": "employee", "display_name": "Nhân viên"},
 }
 
+ALLOWED_STATUSES = {
+    "open",
+    "notified",
+    "in_progress",
+    "waiting_manager_review",
+    "returned_to_ops",
+    "resolved",
+    "investigating",
+}
+
+
+def _sla_hours_by_severity(severity: str) -> int:
+    return {
+        "CRITICAL": 2,
+        "HIGH": 8,
+        "MEDIUM": 24,
+        "LOW": 48,
+    }.get(severity, 24)
+
+
+def _calculate_deadline(detected_at: datetime | None, severity: str) -> datetime:
+    base = detected_at or datetime.now(timezone.utc)
+    return base + timedelta(hours=_sla_hours_by_severity(severity))
+
 def _connect():
     return psycopg.connect(DB_DSN, row_factory=dict_row)
+
+
+def _ensure_s7_columns() -> None:
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            ALTER TABLE exceptions
+              ADD COLUMN IF NOT EXISTS assignee TEXT,
+              ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ,
+              ADD COLUMN IF NOT EXISTS assigned_team TEXT,
+              ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ,
+              ADD COLUMN IF NOT EXISTS sla_breached BOOLEAN NOT NULL DEFAULT FALSE
+            """
+        )
+        conn.commit()
 
 
 def _serialize_exception(row: dict) -> dict:
@@ -69,6 +117,11 @@ def _serialize_exception(row: dict) -> dict:
         "channels_sent": row["channels_sent"] or [],
         "is_escalated": bool(row["is_escalated"]),
         "resolution_note": row["resolution_note"] or "",
+        "assignee": row.get("assignee"),
+        "assigned_at": row["assigned_at"].isoformat() if row.get("assigned_at") else None,
+        "assigned_team": row.get("assigned_team"),
+        "deadline_at": row["deadline_at"].isoformat() if row.get("deadline_at") else None,
+        "sla_breached": bool(row.get("sla_breached", False)),
     }
 
 
@@ -107,11 +160,16 @@ def _list_exceptions_for_role(role: Role) -> list[dict]:
               e.notified_at,
               e.channels_sent,
               e.is_escalated,
-              e.resolution_note
+              e.resolution_note,
+              e.assignee,
+              e.assigned_at,
+              e.assigned_team,
+              e.deadline_at,
+              e.sla_breached
             FROM exceptions e
             JOIN shipments s ON s.id = e.shipment_id
             {where_clause}
-            ORDER BY e.detected_at DESC
+            ORDER BY e.sla_breached DESC, e.deadline_at ASC NULLS LAST, e.detected_at DESC
             """
         )
         rows = cur.fetchall()
@@ -141,7 +199,12 @@ def _get_exception_for_role(exception_id: str, role: Role) -> dict:
               e.notified_at,
               e.channels_sent,
               e.is_escalated,
-              e.resolution_note
+              e.resolution_note,
+              e.assignee,
+              e.assigned_at,
+              e.assigned_team,
+              e.deadline_at,
+              e.sla_breached
             FROM exceptions e
             JOIN shipments s ON s.id = e.shipment_id
             WHERE e.id = %s
@@ -188,6 +251,53 @@ def decode_access_token(token: str) -> dict:
         return payload
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=401, detail=f"invalid_token:{exc}") from exc
+
+
+def _sync_sla_flags() -> None:
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE exceptions
+            SET deadline_at = CASE
+                  WHEN deadline_at IS NOT NULL THEN deadline_at
+                  WHEN COALESCE(severity, severity_hint, 'LOW') = 'CRITICAL' THEN detected_at + INTERVAL '2 hours'
+                  WHEN COALESCE(severity, severity_hint, 'LOW') = 'HIGH' THEN detected_at + INTERVAL '8 hours'
+                  WHEN COALESCE(severity, severity_hint, 'LOW') = 'MEDIUM' THEN detected_at + INTERVAL '24 hours'
+                  ELSE detected_at + INTERVAL '48 hours'
+                END
+            WHERE deadline_at IS NULL
+            """
+        )
+        cur.execute(
+            """
+            UPDATE exceptions
+            SET sla_breached = (deadline_at < NOW())
+            WHERE status <> 'resolved'
+            """
+        )
+        cur.execute(
+            """
+            UPDATE exceptions
+            SET sla_breached = FALSE
+            WHERE status = 'resolved'
+            """
+        )
+        conn.commit()
+
+
+@app.on_event("startup")
+async def startup_sla_loop() -> None:
+    _ensure_s7_columns()
+
+    async def loop() -> None:
+        while True:
+            try:
+                _sync_sla_flags()
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+
+    asyncio.create_task(loop())
 
 
 @app.middleware("http")
@@ -248,6 +358,7 @@ def me(request: Request) -> dict:
 
 @app.get("/api/exceptions")
 def list_exceptions(request: Request) -> list[dict]:
+    _sync_sla_flags()
     role = request.state.user["role"]
     return _list_exceptions_for_role(role)
 
@@ -261,48 +372,110 @@ def get_exception(exception_id: str, request: Request) -> dict:
 
 @app.patch("/api/exceptions/{exception_id}")
 def patch_exception(exception_id: str, payload: ExceptionPatchRequest, request: Request) -> dict:
-    if request.state.user["role"] != "ops":
-        raise HTTPException(status_code=403, detail="forbidden_ops_only")
     with _connect() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM exceptions WHERE id = %s", (exception_id,))
+        cur.execute("SELECT id, status, assignee, detected_at, severity, severity_hint FROM exceptions WHERE id = %s", (exception_id,))
         existing = cur.fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="exception_not_found")
+        actor = request.state.user["sub"]
+        role = request.state.user["role"]
+        next_status = payload.status or existing["status"]
+        if next_status not in ALLOWED_STATUSES:
+            raise HTTPException(status_code=400, detail="invalid_status")
+
+        # Employee can only progress own cases or request manager support.
+        if role == "employee":
+            if existing["assignee"] not in {None, actor}:
+                raise HTTPException(status_code=403, detail="forbidden_not_assignee")
+            if next_status not in {"in_progress", "waiting_manager_review", "resolved", "returned_to_ops"}:
+                raise HTTPException(status_code=403, detail="forbidden_status_transition")
+
+        resolved_at = datetime.now(timezone.utc) if next_status == "resolved" else None
+        deadline_at = None
+        if payload.status and payload.status == "returned_to_ops":
+            severity = existing["severity"] or existing["severity_hint"] or "LOW"
+            deadline_at = _calculate_deadline(existing["detected_at"], severity)
+
         cur.execute(
             """
             UPDATE exceptions
             SET
               status = COALESCE(%s, status),
-              resolution_note = COALESCE(%s, resolution_note)
+              resolution_note = COALESCE(%s, resolution_note),
+              assignee = COALESCE(%s, assignee),
+              assigned_team = COALESCE(%s, assigned_team),
+              assigned_at = CASE
+                WHEN %s IS NOT NULL THEN NOW()
+                ELSE assigned_at
+              END,
+              is_escalated = CASE
+                WHEN COALESCE(%s, status) = 'waiting_manager_review' THEN TRUE
+                ELSE is_escalated
+              END,
+              resolved_at = CASE
+                WHEN %s IS NOT NULL THEN %s
+                WHEN COALESCE(%s, status) <> 'resolved' THEN NULL
+                ELSE resolved_at
+              END,
+              deadline_at = COALESCE(%s, deadline_at),
+              sla_breached = CASE
+                WHEN COALESCE(%s, deadline_at) IS NOT NULL AND COALESCE(%s, status) <> 'resolved'
+                  THEN COALESCE(%s, deadline_at) < NOW()
+                ELSE FALSE
+              END
             WHERE id = %s
             """,
-            (payload.status, payload.resolution_note, exception_id),
+            (
+                payload.status,
+                payload.resolution_note,
+                payload.assignee,
+                payload.assigned_team,
+                payload.assignee,
+                payload.status,
+                resolved_at,
+                resolved_at,
+                payload.status,
+                deadline_at,
+                deadline_at,
+                payload.status,
+                deadline_at,
+                exception_id,
+            ),
         )
         conn.commit()
     _audit(
         exception_id,
         "updated_from_web",
         request.state.user["sub"],
-        {"status": payload.status, "resolution_note": payload.resolution_note},
+        {
+            "status": payload.status,
+            "resolution_note": payload.resolution_note,
+            "assignee": payload.assignee,
+            "assigned_team": payload.assigned_team,
+        },
     )
-    return _get_exception_for_role(exception_id, "ops")
+    return _get_exception_for_role(exception_id, request.state.user["role"])
 
 
 @app.post("/api/exceptions/{exception_id}/escalate")
 def escalate_exception(exception_id: str, request: Request) -> dict:
-    if request.state.user["role"] != "ops":
-        raise HTTPException(status_code=403, detail="forbidden_ops_only")
+    # Backward compatible endpoint. In S7 wording this means "Yêu cầu quản lý hỗ trợ".
     with _connect() as conn, conn.cursor() as cur:
-        cur.execute("SELECT channels_sent FROM exceptions WHERE id = %s", (exception_id,))
+        cur.execute("SELECT channels_sent, assignee FROM exceptions WHERE id = %s", (exception_id,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="exception_not_found")
+        if request.state.user["role"] == "employee" and row["assignee"] not in {None, request.state.user["sub"]}:
+            raise HTTPException(status_code=403, detail="forbidden_not_assignee")
         channels = set(row["channels_sent"] or [])
         channels.add("telegram_manager")
         cur.execute(
             """
             UPDATE exceptions
-            SET is_escalated = TRUE, channels_sent = %s
+            SET
+              is_escalated = TRUE,
+              channels_sent = %s,
+              status = 'waiting_manager_review'
             WHERE id = %s
             """,
             (sorted(channels), exception_id),
@@ -310,11 +483,70 @@ def escalate_exception(exception_id: str, request: Request) -> dict:
         conn.commit()
     _audit(
         exception_id,
-        "manual_escalate_from_web",
+        "requested_manager_support_from_web",
         request.state.user["sub"],
         {"channels_sent": sorted(channels)},
     )
     return {"success": True}
+
+
+@app.post("/api/exceptions/{exception_id}/claim")
+def claim_exception(exception_id: str, request: Request) -> dict:
+    actor = request.state.user["sub"]
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE exceptions
+            SET assignee = %s,
+                assigned_at = NOW(),
+                status = CASE
+                  WHEN status IN ('open', 'returned_to_ops', 'notified') THEN 'in_progress'
+                  ELSE status
+                END
+            WHERE id = %s
+            RETURNING id
+            """,
+            (actor, exception_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="exception_not_found")
+        conn.commit()
+    _audit(exception_id, "claimed_from_web", actor, {"assignee": actor})
+    return _get_exception_for_role(exception_id, request.state.user["role"])
+
+
+@app.post("/api/exceptions/{exception_id}/assign")
+def assign_exception(exception_id: str, payload: AssignExceptionRequest, request: Request) -> dict:
+    if request.state.user["role"] != "ops":
+        raise HTTPException(status_code=403, detail="forbidden_ops_only")
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE exceptions
+            SET assignee = %s,
+                assigned_team = COALESCE(%s, assigned_team),
+                assigned_at = NOW(),
+                status = CASE
+                  WHEN status IN ('open', 'returned_to_ops', 'notified') THEN 'in_progress'
+                  ELSE status
+                END
+            WHERE id = %s
+            RETURNING id
+            """,
+            (payload.assignee, payload.assigned_team, exception_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="exception_not_found")
+        conn.commit()
+    _audit(
+        exception_id,
+        "assigned_from_web",
+        request.state.user["sub"],
+        {"assignee": payload.assignee, "assigned_team": payload.assigned_team},
+    )
+    return _get_exception_for_role(exception_id, "ops")
 
 
 @app.get("/api/ops/exceptions")

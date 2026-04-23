@@ -88,7 +88,7 @@ export async function manualEscalate(id: string): Promise<boolean> {
   );
   if (apiSuccess?.success) return true;
   if (!USE_MOCK_DATA) {
-    throw new Error("Không leo thang được ngoại lệ qua API.");
+    throw new Error("Không gửi được yêu cầu quản lý hỗ trợ qua API.");
   }
 
   const items = readLocal();
@@ -101,4 +101,35 @@ export async function manualEscalate(id: string): Promise<boolean> {
   };
   writeLocal(items);
   return true;
+}
+
+export async function claimException(id: string): Promise<ExceptionItem | null> {
+  const apiData = await safeFetch<ExceptionItem>(
+    `/api/exceptions/${id}/claim`,
+    withAuthHeaders({ method: "POST" }),
+  );
+  if (apiData) return apiData;
+  if (!USE_MOCK_DATA) {
+    throw new Error("Không nhận xử lý được ngoại lệ qua API.");
+  }
+  return getExceptionById(id);
+}
+
+export async function assignException(
+  id: string,
+  payload: { assignee: string; assigned_team?: string },
+): Promise<ExceptionItem | null> {
+  const apiData = await safeFetch<ExceptionItem>(
+    `/api/exceptions/${id}/assign`,
+    withAuthHeaders({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  );
+  if (apiData) return apiData;
+  if (!USE_MOCK_DATA) {
+    throw new Error("Không chuyển người xử lý được ngoại lệ qua API.");
+  }
+  return getExceptionById(id);
 }
