@@ -78,6 +78,7 @@
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://classifier:8002/classify",
         "sendBody": true,
         "specifyBody": "json",
@@ -133,10 +134,11 @@
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://n8n:5678/webhook/wf3-notify",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{$json}}",
+        "jsonBody": "={{ { exception_id: $('Enrich Classification Result').item.json.exception_id, severity: $('Enrich Classification Result').item.json.severity, overdue_hours: $('Enrich Classification Result').item.json.overdue_hours, escalate_to_manager: $('Enrich Classification Result').item.json.escalate_to_manager, reason: $('Enrich Classification Result').item.json.reason, carrier: $('Enrich Classification Result').item.json.carrier, channels_sent: [] } }}",
         "options": {
           "timeout": 8000
         }

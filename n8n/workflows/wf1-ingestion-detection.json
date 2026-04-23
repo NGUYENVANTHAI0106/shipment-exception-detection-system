@@ -65,22 +65,33 @@
     },
     {
       "parameters": {
-        "batchSize": 1,
-        "options": {}
+        "operation": "executeQuery",
+        "query": "INSERT INTO shipments (\n  id, tracking_number, carrier, origin, destination,\n  expected_delivery, actual_delivery, status, failed_attempts, last_updated, created_at\n)\nVALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)\nON CONFLICT (tracking_number) DO UPDATE SET\n  carrier = EXCLUDED.carrier,\n  origin = EXCLUDED.origin,\n  destination = EXCLUDED.destination,\n  expected_delivery = EXCLUDED.expected_delivery,\n  actual_delivery = EXCLUDED.actual_delivery,\n  status = EXCLUDED.status,\n  failed_attempts = EXCLUDED.failed_attempts,\n  last_updated = EXCLUDED.last_updated\nRETURNING id, tracking_number;",
+        "options": {
+          "queryReplacement": "={{[\n  $json.shipment.id,\n  $json.shipment.tracking_number,\n  $json.shipment.carrier,\n  $json.shipment.origin,\n  $json.shipment.destination,\n  $json.shipment.expected_delivery,\n  $json.shipment.actual_delivery,\n  $json.shipment.status,\n  $json.shipment.failed_attempts ?? 0,\n  $json.shipment.last_updated,\n  $json.shipment.created_at ?? $now.toISO()\n]}}"
+        }
       },
-      "id": "split-batches",
-      "name": "Split In Batches",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
+      "id": "upsert-shipment",
+      "name": "Upsert Shipment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
         970,
         260
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "replace-with-postgres-credential-id",
+          "name": "Postgres Internal"
+        }
+      }
     },
     {
       "parameters": {
         "operation": "get",
-        "propertyName": "processed:{{$json.shipment.id}}"
+        "propertyName": "dedup_value",
+        "key": "={{'processed:' + $node[\"Validate Shipment Fields\"].json.shipment.tracking_number}}",
+        "options": {}
       },
       "id": "redis-get",
       "name": "Redis Dedup Get",
@@ -108,7 +119,7 @@
           "conditions": [
             {
               "id": "cache-hit",
-              "leftValue": "={{$json.value}}",
+              "leftValue": "={{$json.dedup_value}}",
               "rightValue": "",
               "operator": {
                 "type": "string",
@@ -132,10 +143,11 @@
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://detector:8001/detect",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { shipment: $json.shipment } }}",
+        "jsonBody": "={{ { shipment: $node[\"Validate Shipment Fields\"].json.shipment } }}",
         "options": {
           "timeout": 5000
         }
@@ -195,7 +207,7 @@
     {
       "parameters": {
         "operation": "set",
-        "propertyName": "processed:{{$json.shipment_id}}",
+        "key": "={{'processed:' + $node[\"Validate Shipment Fields\"].json.shipment.tracking_number}}",
         "value": "1",
         "expire": true,
         "ttl": 3600
@@ -217,7 +229,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return [{\n  json: {\n    shipment_id: $json.shipment_id,\n    exception_type: $json.exception_type,\n    reason: $json.reason,\n    severity_hint: $json.severity_hint,\n    overdue_hours: $json.overdue_hours || 0,\n    status: 'open',\n    detected_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const upsert = $('Upsert Shipment').item.json || {};\nreturn [{\n  json: {\n    shipment_id: upsert.id || $json.shipment_id,\n    tracking_number: upsert.tracking_number || $('Validate Shipment Fields').item.json.shipment.tracking_number,\n    exception_type: $json.exception_type,\n    reason: $json.reason,\n    severity_hint: $json.severity_hint,\n    overdue_hours: $json.overdue_hours || 0,\n    status: 'open',\n    detected_at: new Date().toISOString()\n  }\n}];"
       },
       "id": "set-exception-payload",
       "name": "Set Exception Payload",
@@ -253,6 +265,7 @@
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://n8n:5678/webhook/wf2-classify",
         "sendBody": true,
         "specifyBody": "json",
@@ -299,23 +312,18 @@
       "main": [
         [
           {
-            "node": "Split In Batches",
+            "node": "Upsert Shipment",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Split In Batches": {
+    "Upsert Shipment": {
       "main": [
         [
           {
             "node": "Redis Dedup Get",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Call Detector",
             "type": "main",
             "index": 0
           }
@@ -353,13 +361,7 @@
             "index": 0
           }
         ],
-        [
-          {
-            "node": "Split In Batches",
-            "type": "main",
-            "index": 1
-          }
-        ]
+        []
       ]
     },
     "Redis Dedup Set TTL": {
@@ -395,26 +397,10 @@
         ]
       ]
     },
-    "Trigger WF2": {
-      "main": [
-        [
-          {
-            "node": "Split In Batches",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
+    "Trigger WF2": { "main": [] },
     "IF Cache Hit": {
       "main": [
-        [
-          {
-            "node": "Split In Batches",
-            "type": "main",
-            "index": 1
-          }
-        ],
+        [],
         [
           {
             "node": "Call Detector",

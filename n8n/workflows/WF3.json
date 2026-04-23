@@ -1,11 +1,11 @@
 {
-  "name": "WF3 - Notification Phase 2 (S4)",
+  "name": "WF3 - Notification (S4)",
   "nodes": [
     {
       "parameters": {
         "path": "wf3-notify",
         "httpMethod": "POST",
-        "responseMode": "lastNode",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "wf3-webhook",
@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = { ...$json.body, ...$json };\nconst overdue = Number(payload.overdue_hours || 0);\nlet severity = payload.severity;\nlet escalateToManager = Boolean(payload.escalate_to_manager);\nlet slaEscalationApplied = false;\n\nif (severity === 'HIGH' && overdue > 72) {\n  severity = 'CRITICAL';\n  escalateToManager = true;\n  slaEscalationApplied = true;\n}\nif (severity === 'MEDIUM' && overdue > 48) {\n  severity = 'HIGH';\n  slaEscalationApplied = true;\n}\n\nreturn [{ json: { ...payload, severity, escalate_to_manager: escalateToManager, overdue_hours: overdue, sla_escalation_applied: slaEscalationApplied } }];"
+        "jsCode": "const webhook = $('WF3 Webhook').item.json || {};\nconst bodyFromWebhook = webhook.body && typeof webhook.body === 'object' ? webhook.body : {};\nconst bodyFromCurrent = $json.body && typeof $json.body === 'object' ? $json.body : {};\n\n// Prefer request body only (avoid mixing with headers/params metadata).\nconst payload = { ...bodyFromWebhook, ...bodyFromCurrent };\n\nconst rawExceptionId = payload.exception_id ?? payload.id ?? payload.exceptionId ?? webhook.query?.exception_id ?? webhook.params?.exception_id;\nconst exceptionId = typeof rawExceptionId === 'string' ? rawExceptionId.trim() : rawExceptionId;\nconst overdue = Number(payload.overdue_hours ?? payload.overdueHours ?? 0);\nlet severity = payload.severity;\nlet escalateToManager = Boolean(payload.escalate_to_manager);\nlet slaEscalationApplied = false;\n\nif (severity === 'HIGH' && overdue > 72) {\n  severity = 'CRITICAL';\n  escalateToManager = true;\n  slaEscalationApplied = true;\n}\nif (severity === 'MEDIUM' && overdue > 48) {\n  severity = 'HIGH';\n  slaEscalationApplied = true;\n}\n\nreturn [{\n  json: {\n    ...payload,\n    exception_id: exceptionId || null,\n    missing_exception_id: !exceptionId,\n    severity,\n    escalate_to_manager: escalateToManager,\n    overdue_hours: overdue,\n    sla_escalation_applied: slaEscalationApplied\n  }\n}];"
       },
       "id": "apply-sla-escalation",
       "name": "Apply SLA Escalation",
@@ -33,7 +33,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT status, notified_at FROM exceptions WHERE id = $1 LIMIT 1;",
+        "query": "SELECT status, notified_at\nFROM exceptions\nWHERE id = $1\nUNION ALL\nSELECT 'open'::text AS status, NULL::timestamptz AS notified_at\nWHERE NOT EXISTS (SELECT 1 FROM exceptions WHERE id = $1)\nLIMIT 1;",
         "options": {
           "queryReplacement": "={{[$json.exception_id]}}"
         }
@@ -106,6 +106,7 @@
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://notifier:8003/notify",
         "sendBody": true,
         "specifyBody": "json",
@@ -328,10 +329,10 @@
   },
   "active": false,
   "settings": {},
-  "versionId": "wf3-s4-phase2-version-1",
+  "versionId": "wf3-s4-single-version-1",
   "meta": {
-    "description": "WF3 phase 2: update exceptions and write audit_logs for notified/escalated/error."
+    "description": "WF3 unified single file: notify + update exceptions + audit logs."
   },
-  "id": "wf3-s4-notification-phase2",
+  "id": "wf3-s4-notification",
   "tags": []
 }
