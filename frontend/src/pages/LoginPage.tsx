@@ -10,6 +10,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   if (user?.role === "ops") return <Navigate to="/ops/dashboard" replace />;
+  if (user?.role === "manager") return <Navigate to="/manager/dashboard" replace />;
   if (user?.role === "employee") return <Navigate to="/employee/dashboard" replace />;
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -29,10 +30,10 @@ export function LoginPage() {
     <div className="login-page">
       <form className="login-card" onSubmit={onSubmit}>
         <h1>Đăng nhập hệ thống</h1>
-        <p>Sử dụng tài khoản phân vai trò Ops hoặc Nhân viên.</p>
+        <p>Sử dụng tài khoản phân vai trò Ops, Quản lý hoặc Nhân viên.</p>
         <label className="fm-field">
           Tài khoản
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ops hoặc employee" />
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ops, manager hoặc employee" />
         </label>
         <label className="fm-field">
           Mật khẩu
@@ -49,6 +50,7 @@ export function LoginPage() {
         </button>
         <div className="login-hint">
           <small>Ops: ops / ops123</small>
+          <small>Quản lý: manager / manager123</small>
           <small>Nhân viên: employee / employee123</small>
         </div>
       </form>

@@ -154,3 +154,48 @@ export async function bulkRequestManagerSupport(ids: string[]): Promise<{ succes
   const success = results.filter((r) => r.status === "fulfilled").length;
   return { success, failed: ids.length - success };
 }
+
+export interface AuditLogItem {
+  id: string;
+  exception_id: string;
+  action: string;
+  actor: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function listAuditLogs(exceptionId: string): Promise<AuditLogItem[]> {
+  const apiData = await safeFetch<AuditLogItem[]>(
+    `/api/audit-logs?exception_id=${exceptionId}&ts=${Date.now()}`,
+    withAuthHeaders({ cache: "no-store" }),
+  );
+  if (apiData) return apiData;
+  if (USE_MOCK_DATA) return [];
+  throw new Error("Không tải được nhật ký thao tác.");
+}
+
+async function managerAction(id: string, endpoint: string, reason: string): Promise<ExceptionItem | null> {
+  const apiData = await safeFetch<ExceptionItem>(
+    `/api/manager/exceptions/${id}/${endpoint}`,
+    withAuthHeaders({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }),
+  );
+  if (apiData) return apiData;
+  if (USE_MOCK_DATA) return getExceptionById(id);
+  throw new Error("Không thực hiện được thao tác quản lý.");
+}
+
+export async function managerAcceptReview(id: string, reason: string): Promise<ExceptionItem | null> {
+  return managerAction(id, "accept-review", reason);
+}
+
+export async function managerReturnToOps(id: string, reason: string): Promise<ExceptionItem | null> {
+  return managerAction(id, "return-to-ops", reason);
+}
+
+export async function managerApproveClose(id: string, reason: string): Promise<ExceptionItem | null> {
+  return managerAction(id, "approve-close", reason);
+}

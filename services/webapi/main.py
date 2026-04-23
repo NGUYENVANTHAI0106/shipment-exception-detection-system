@@ -17,7 +17,7 @@ from pydantic import BaseModel
 import psycopg
 from psycopg.rows import dict_row
 
-Role = Literal["ops", "employee"]
+Role = Literal["ops", "employee", "manager"]
 
 JWT_SECRET = os.getenv("APP_JWT_SECRET", "dev-secret-change-me")
 ACCESS_TTL_SECONDS = int(os.getenv("APP_ACCESS_TOKEN_EXPIRE_MINUTES", "480")) * 60
@@ -49,9 +49,14 @@ class AssignExceptionRequest(BaseModel):
     assigned_team: str | None = None
 
 
+class ManagerReviewRequest(BaseModel):
+    reason: str
+
+
 USERS = {
     "ops": {"password": "ops123", "role": "ops", "display_name": "Ops User"},
     "employee": {"password": "employee123", "role": "employee", "display_name": "Nhân viên"},
+    "manager": {"password": "manager123", "role": "manager", "display_name": "Quản lý"},
 }
 
 ALLOWED_STATUSES = {
@@ -117,6 +122,7 @@ def _serialize_exception(row: dict) -> dict:
         "channels_sent": row["channels_sent"] or [],
         "is_escalated": bool(row["is_escalated"]),
         "resolution_note": row["resolution_note"] or "",
+        "resolved_at": row["resolved_at"].isoformat() if row.get("resolved_at") else None,
         "assignee": row.get("assignee"),
         "assigned_at": row["assigned_at"].isoformat() if row.get("assigned_at") else None,
         "assigned_team": row.get("assigned_team"),
@@ -161,6 +167,7 @@ def _list_exceptions_for_role(role: Role) -> list[dict]:
               e.channels_sent,
               e.is_escalated,
               e.resolution_note,
+              e.resolved_at,
               e.assignee,
               e.assigned_at,
               e.assigned_team,
@@ -200,6 +207,7 @@ def _get_exception_for_role(exception_id: str, role: Role) -> dict:
               e.channels_sent,
               e.is_escalated,
               e.resolution_note,
+              e.resolved_at,
               e.assignee,
               e.assigned_at,
               e.assigned_team,
@@ -218,6 +226,79 @@ def _get_exception_for_role(exception_id: str, role: Role) -> dict:
     if role == "employee" and severity == "CRITICAL":
         raise HTTPException(status_code=403, detail="forbidden_critical_for_employee")
     return _serialize_exception(row)
+
+
+def _apply_manager_status_change(exception_id: str, manager: str, target_status: str, reason: str) -> dict:
+    reason_text = reason.strip()
+    if not reason_text:
+        raise HTTPException(status_code=400, detail="reason_required")
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT status, assignee, assigned_team, resolution_note, resolved_at
+            FROM exceptions
+            WHERE id = %s
+            """,
+            (exception_id,),
+        )
+        before = cur.fetchone()
+        if not before:
+            raise HTTPException(status_code=404, detail="exception_not_found")
+        resolved_at = datetime.now(timezone.utc) if target_status == "resolved" else None
+        cur.execute(
+            """
+            UPDATE exceptions
+            SET status = %s::text,
+                assignee = CASE WHEN %s::text = 'in_progress' THEN %s::text ELSE assignee END,
+                assigned_team = CASE WHEN %s::text = 'in_progress' THEN 'manager' ELSE assigned_team END,
+                is_escalated = CASE WHEN %s::text IN ('in_progress','resolved') THEN FALSE ELSE is_escalated END,
+                resolution_note = CASE
+                    WHEN COALESCE(resolution_note, '') = '' THEN %s
+                    ELSE resolution_note || E'\\n' || %s
+                END,
+                resolved_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE resolved_at END,
+                sla_breached = CASE WHEN %s::text = 'resolved' THEN FALSE ELSE sla_breached END
+            WHERE id = %s
+            """,
+            (
+                target_status,
+                target_status,
+                manager,
+                target_status,
+                target_status,
+                f"[Manager] {reason_text}",
+                f"[Manager] {reason_text}",
+                resolved_at,
+                resolved_at,
+                target_status,
+                exception_id,
+            ),
+        )
+        conn.commit()
+    updated = _get_exception_for_role(exception_id, "manager")
+    _audit(
+        exception_id,
+        f"manager_{target_status}",
+        manager,
+        {
+            "old": {
+                "status": before["status"],
+                "assignee": before["assignee"],
+                "assigned_team": before["assigned_team"],
+                "resolution_note": before["resolution_note"],
+                "resolved_at": before["resolved_at"].isoformat() if before["resolved_at"] else None,
+            },
+            "new": {
+                "status": updated["status"],
+                "assignee": updated.get("assignee"),
+                "assigned_team": updated.get("assigned_team"),
+                "resolution_note": updated.get("resolution_note"),
+                "resolved_at": updated.get("resolved_at"),
+            },
+            "reason": reason_text,
+        },
+    )
+    return updated
 
 
 def _b64(data: bytes) -> str:
@@ -317,13 +398,15 @@ async def auth_and_rbac_middleware(request: Request, call_next):
         token = auth_header.replace("Bearer ", "", 1).strip()
         payload = decode_access_token(token)
         role = payload.get("role")
-        if role not in {"ops", "employee"}:
+        if role not in {"ops", "employee", "manager"}:
             raise HTTPException(status_code=401, detail="invalid_role_claim")
 
         if path.startswith("/api/ops/") and role != "ops":
             raise HTTPException(status_code=403, detail="forbidden_ops_only")
         if path.startswith("/api/employee/") and role != "employee":
             raise HTTPException(status_code=403, detail="forbidden_employee_only")
+        if path.startswith("/api/manager/") and role != "manager":
+            raise HTTPException(status_code=403, detail="forbidden_manager_only")
     except HTTPException as exc:
         # Middleware must return a response directly; re-raising here becomes 500.
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -655,10 +738,60 @@ def get_employee_exception(exception_id: str, request: Request) -> dict:
     return get_exception(exception_id, request)
 
 
+@app.get("/api/manager/exceptions")
+def list_manager_exceptions(request: Request) -> list[dict]:
+    if request.state.user["role"] != "manager":
+        raise HTTPException(status_code=403, detail="forbidden_manager_only")
+    return list_exceptions(request)
+
+
+@app.get("/api/manager/exceptions/{exception_id}")
+def get_manager_exception(exception_id: str, request: Request) -> dict:
+    if request.state.user["role"] != "manager":
+        raise HTTPException(status_code=403, detail="forbidden_manager_only")
+    return get_exception(exception_id, request)
+
+
+@app.post("/api/manager/exceptions/{exception_id}/accept-review")
+def manager_accept_review(exception_id: str, payload: ManagerReviewRequest, request: Request) -> dict:
+    if request.state.user["role"] != "manager":
+        raise HTTPException(status_code=403, detail="forbidden_manager_only")
+    return _apply_manager_status_change(
+        exception_id=exception_id,
+        manager=request.state.user["sub"],
+        target_status="in_progress",
+        reason=payload.reason,
+    )
+
+
+@app.post("/api/manager/exceptions/{exception_id}/return-to-ops")
+def manager_return_to_ops(exception_id: str, payload: ManagerReviewRequest, request: Request) -> dict:
+    if request.state.user["role"] != "manager":
+        raise HTTPException(status_code=403, detail="forbidden_manager_only")
+    return _apply_manager_status_change(
+        exception_id=exception_id,
+        manager=request.state.user["sub"],
+        target_status="returned_to_ops",
+        reason=payload.reason,
+    )
+
+
+@app.post("/api/manager/exceptions/{exception_id}/approve-close")
+def manager_approve_close(exception_id: str, payload: ManagerReviewRequest, request: Request) -> dict:
+    if request.state.user["role"] != "manager":
+        raise HTTPException(status_code=403, detail="forbidden_manager_only")
+    return _apply_manager_status_change(
+        exception_id=exception_id,
+        manager=request.state.user["sub"],
+        target_status="resolved",
+        reason=payload.reason,
+    )
+
+
 @app.get("/api/audit-logs")
 def list_audit_logs(request: Request, exception_id: str) -> list[dict]:
-    if request.state.user["role"] != "ops":
-        raise HTTPException(status_code=403, detail="forbidden_ops_only")
+    if request.state.user["role"] not in {"ops", "manager"}:
+        raise HTTPException(status_code=403, detail="forbidden_ops_or_manager_only")
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
             """
