@@ -133,3 +133,24 @@ export async function assignException(
   }
   return getExceptionById(id);
 }
+
+export async function bulkClaimExceptions(ids: string[]): Promise<{ success: number; failed: number }> {
+  const results = await Promise.allSettled(ids.map((id) => claimException(id)));
+  const success = results.filter((r) => r.status === "fulfilled").length;
+  return { success, failed: ids.length - success };
+}
+
+export async function bulkUpdateStatus(
+  ids: string[],
+  status: ExceptionItem["status"],
+): Promise<{ success: number; failed: number }> {
+  const results = await Promise.allSettled(ids.map((id) => updateException(id, { status })));
+  const success = results.filter((r) => r.status === "fulfilled").length;
+  return { success, failed: ids.length - success };
+}
+
+export async function bulkRequestManagerSupport(ids: string[]): Promise<{ success: number; failed: number }> {
+  const results = await Promise.allSettled(ids.map((id) => manualEscalate(id)));
+  const success = results.filter((r) => r.status === "fulfilled").length;
+  return { success, failed: ids.length - success };
+}

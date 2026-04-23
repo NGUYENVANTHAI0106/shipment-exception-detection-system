@@ -1,10 +1,11 @@
 import { ArrowRight, Clock3, Filter } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
-import { listExceptions } from "../lib/exceptionService";
-import type { ExceptionItem, ExceptionType, Severity } from "../types";
+import { bulkClaimExceptions, bulkRequestManagerSupport, bulkUpdateStatus, listExceptions } from "../lib/exceptionService";
+import type { ExceptionItem, ExceptionStatus, ExceptionType, Severity } from "../types";
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString("vi-VN", {
@@ -33,13 +34,19 @@ function getSlaLabel(item: ExceptionItem): { text: string; className: string } {
 }
 
 export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" }) {
+  const { user } = useAuth();
   const [items, setItems] = useState<ExceptionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const [typeFilter, setTypeFilter] = useState<ExceptionType | "all">("all");
   const [carrierFilter, setCarrierFilter] = useState<string>("all");
+  const [opsFilter, setOpsFilter] = useState<"all" | "my_cases" | "unassigned" | "waiting_manager" | "sla_breached">("all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkStatus, setBulkStatus] = useState<ExceptionStatus>("in_progress");
+  const [bulkRunning, setBulkRunning] = useState(false);
   const pollSeqRef = useRef(0);
   const appliedSeqRef = useRef(0);
 
@@ -55,6 +62,7 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
         if (seq < appliedSeqRef.current) return;
         appliedSeqRef.current = seq;
         setItems(data);
+        setSelectedIds((prev) => prev.filter((id) => data.some((it) => it.id === id)));
         setError(null);
         setLastSyncedAt(new Date().toISOString());
       } catch (err) {
@@ -87,6 +95,13 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
       .filter((it) => severityFilter === "all" || it.severity === severityFilter)
       .filter((it) => typeFilter === "all" || it.exception_type === typeFilter)
       .filter((it) => carrierFilter === "all" || it.carrier === carrierFilter)
+      .filter((it) => {
+        if (opsFilter === "my_cases") return Boolean(user?.username) && it.assignee === user?.username;
+        if (opsFilter === "unassigned") return !it.assignee;
+        if (opsFilter === "waiting_manager") return it.status === "waiting_manager_review";
+        if (opsFilter === "sla_breached") return Boolean(it.sla_breached);
+        return true;
+      })
       .sort((a, b) => {
         const aDeadline = a.deadline_at ? new Date(a.deadline_at).getTime() : Number.POSITIVE_INFINITY;
         const bDeadline = b.deadline_at ? new Date(b.deadline_at).getTime() : Number.POSITIVE_INFINITY;
@@ -95,7 +110,47 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
         if (detectedDelta !== 0) return detectedDelta;
         return severityOrder[a.severity] - severityOrder[b.severity];
       });
-  }, [items, severityFilter, typeFilter, carrierFilter]);
+  }, [items, severityFilter, typeFilter, carrierFilter, opsFilter, user?.username]);
+
+  const allSelected = filtered.length > 0 && selectedIds.length === filtered.length;
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds([]);
+      return;
+    }
+    setSelectedIds(filtered.map((item) => item.id));
+  };
+
+  const toggleOne = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const runBulk = async (mode: "claim" | "status" | "support") => {
+    if (selectedIds.length === 0) {
+      setActionMessage("Vui lòng chọn ít nhất một ngoại lệ.");
+      return;
+    }
+    setBulkRunning(true);
+    setActionMessage(null);
+    try {
+      const result =
+        mode === "claim"
+          ? await bulkClaimExceptions(selectedIds)
+          : mode === "status"
+            ? await bulkUpdateStatus(selectedIds, bulkStatus)
+            : await bulkRequestManagerSupport(selectedIds);
+      setActionMessage(`Đã xử lý ${result.success}/${selectedIds.length} ngoại lệ${result.failed ? `, lỗi ${result.failed}` : ""}.`);
+      const data = await listExceptions();
+      setItems(data);
+      setSelectedIds([]);
+      setLastSyncedAt(new Date().toISOString());
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "Thao tác hàng loạt thất bại.");
+    } finally {
+      setBulkRunning(false);
+    }
+  };
 
   return (
     <div className="page-container fm-dashboard-page">
@@ -147,7 +202,36 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
               <option value="J&T">J&T</option>
             </select>
           </label>
+          <label className="fm-field">
+            Bộ lọc vận hành
+            <select value={opsFilter} onChange={(e) => setOpsFilter(e.target.value as typeof opsFilter)}>
+              <option value="all">Tất cả</option>
+              <option value="my_cases">Tôi phụ trách</option>
+              <option value="unassigned">Chưa nhận</option>
+              <option value="waiting_manager">Chờ quản lý</option>
+              <option value="sla_breached">Quá SLA</option>
+            </select>
+          </label>
         </div>
+        <div className="fm-bulk-row">
+          <button className="btn btn-secondary" disabled={bulkRunning} onClick={() => void runBulk("claim")}>
+            Nhận xử lý hàng loạt
+          </button>
+          <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value as ExceptionStatus)}>
+            <option value="in_progress">Đang xử lý</option>
+            <option value="waiting_manager_review">Chờ quản lý xử lý</option>
+            <option value="returned_to_ops">Trả lại vận hành</option>
+            <option value="resolved">Đã xử lý</option>
+          </select>
+          <button className="btn btn-secondary" disabled={bulkRunning} onClick={() => void runBulk("status")}>
+            Đổi trạng thái hàng loạt
+          </button>
+          <button className="btn btn-secondary" disabled={bulkRunning} onClick={() => void runBulk("support")}>
+            Yêu cầu quản lý hàng loạt
+          </button>
+          <small>Đã chọn: {selectedIds.length}</small>
+        </div>
+        {actionMessage && <p className="inline-message">{actionMessage}</p>}
       </section>
 
       <section className="card table-card fm-table-wrap">
@@ -161,6 +245,9 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
           <table>
             <thead>
               <tr>
+                <th>
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+                </th>
                 <th>Mức độ</th>
                 <th>Loại</th>
                 <th>Mã tracking</th>
@@ -178,6 +265,13 @@ export function DashboardPage({ scope = "ops" }: { scope?: "ops" | "employee" })
                 const sla = getSlaLabel(item);
                 return (
                   <tr key={item.id} className={item.severity === "CRITICAL" ? "critical-row" : ""}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(item.id)}
+                      onChange={() => toggleOne(item.id)}
+                    />
+                  </td>
                   <td>
                     <SeverityBadge severity={item.severity} />
                   </td>
