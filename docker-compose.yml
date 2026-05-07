@@ -138,8 +138,13 @@ services:
     restart: unless-stopped
 
   nginx:
+    profiles: ["fullstack"]
     image: nginx:1.27-alpine
     depends_on:
+      api:
+        condition: service_started
+      frontend:
+        condition: service_started
       n8n:
         condition: service_started
     ports:
