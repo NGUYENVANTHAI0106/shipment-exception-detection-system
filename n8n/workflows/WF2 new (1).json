@@ -1,42 +1,42 @@
 {
-  "name": "WF2 - AI Classification (S3)",
+  "name": "WF2 new",
   "nodes": [
     {
       "parameters": {
-        "path": "wf2-classify",
         "httpMethod": "POST",
-        "responseMode": "lastNode",
+        "path": "wf2-classify",
         "options": {}
       },
-      "id": "wf2-webhook",
+      "id": "faa902e2-c303-450a-a928-abd36b198ac4",
       "name": "WF2 Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        280,
-        260
-      ]
+        0,
+        0
+      ],
+      "webhookId": "3a8b4a6f-acb6-41a4-9577-f0f2f44816b3"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT e.id AS exception_id, e.shipment_id, e.exception_type, e.reason, e.severity_hint, e.overdue_hours, s.carrier, s.destination, s.failed_attempts, s.created_at\nFROM exceptions e\nJOIN shipments s ON s.id = e.shipment_id\nWHERE e.id = $1\nLIMIT 1;",
+        "query": "SELECT e.id AS exception_id, e.shipment_id, e.exception_type, e.reason, e.severity_hint, e.overdue_hours, s.carrier, s.destination, s.failed_attempts, s.created_at, s.tracking_number\nFROM exceptions e\nJOIN shipments s ON s.id = e.shipment_id\nWHERE e.id = $1\nLIMIT 1;",
         "options": {
           "queryReplacement": "={{[$json.body.exception_id || $json.exception_id]}}"
         }
       },
-      "id": "load-current-exception",
+      "id": "39e0548f-7900-4482-a059-a87c266dadf7",
       "name": "Load Exception + Shipment",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        520,
-        260
+        240,
+        0
       ],
       "credentials": {
         "postgres": {
-          "id": "replace-with-postgres-credential-id",
-          "name": "Postgres Internal"
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
         }
       }
     },
@@ -48,32 +48,32 @@
           "queryReplacement": "={{[$json.shipment_id]}}"
         }
       },
-      "id": "load-history",
+      "id": "36c1c4c3-2e58-4941-9112-c44d37d890eb",
       "name": "Load Exception History",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        760,
-        260
+        480,
+        0
       ],
       "credentials": {
         "postgres": {
-          "id": "replace-with-postgres-credential-id",
-          "name": "Postgres Internal"
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const current = $('Load Exception + Shipment').item.json;\nconst historyRows = $input.all().map((item) => item.json);\nconst latest = historyRows[0] || {};\nconst shipmentAgeDays = Math.max(0, Math.floor((Date.now() - new Date(current.created_at).getTime()) / (1000 * 60 * 60 * 24)));\n\nreturn [{\n  json: {\n    exception_id: current.exception_id,\n    shipment_id: current.shipment_id,\n    exception_data: {\n      exception_type: current.exception_type,\n      reason: current.reason,\n      severity_hint: current.severity_hint,\n      overdue_hours: Number(current.overdue_hours || 0),\n      carrier: current.carrier,\n      destination: current.destination,\n      failed_attempts: current.failed_attempts || 0\n    },\n    history_context: {\n      previous_exception_count: historyRows.length,\n      last_exception_type: latest.exception_type || 'none',\n      shipment_age_days: shipmentAgeDays\n    }\n  }\n}];"
+        "jsCode": "const current = $('Load Exception + Shipment').item.json;\nconst historyRows = $input.all().map((item) => item.json);\nconst latest = historyRows[0] || {};\nconst shipmentAgeDays = Math.max(0, Math.floor((Date.now() - new Date(current.created_at).getTime()) / (1000 * 60 * 60 * 24)));\n\nreturn [{\n  json: {\n    exception_id: current.exception_id,\n    shipment_id: current.shipment_id,\n    tracking_number: current.tracking_number || '',\n    exception_data: {\n      exception_type: current.exception_type,\n      reason: current.reason,\n      severity_hint: current.severity_hint,\n      overdue_hours: Number(current.overdue_hours || 0),\n      carrier: current.carrier,\n      destination: current.destination,\n      failed_attempts: current.failed_attempts || 0\n    },\n    history_context: {\n      previous_exception_count: historyRows.length,\n      last_exception_type: latest.exception_type || 'none',\n      shipment_age_days: shipmentAgeDays\n    }\n  }\n}];"
       },
-      "id": "build-classifier-payload",
+      "id": "1e899db4-2a00-4078-b7b5-39bd3792b03b",
       "name": "Build Classifier Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1000,
-        260
+        720,
+        0
       ]
     },
     {
@@ -87,26 +87,26 @@
           "timeout": 10000
         }
       },
-      "id": "call-classifier",
+      "id": "55355456-282b-41bd-a278-f9699110dcba",
       "name": "Call Classifier",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1240,
-        260
+        960,
+        0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Build Classifier Payload').item.json;\nreturn [{\n  json: {\n    exception_id: meta.exception_id,\n    shipment_id: meta.shipment_id,\n    severity: $json.severity,\n    exception_type: $json.exception_type,\n    ai_suggestion: $json.suggested_action,\n    confidence: Number($json.confidence || 0),\n    fallback_used: Boolean($json.fallback_used),\n    fallback_reason: $json.fallback_reason,\n    model_used: $json.model_used,\n    escalate_to_manager: Boolean($json.escalate_to_manager),\n    classified_at: $json.classified_at,\n    overdue_hours: Number(meta.exception_data.overdue_hours || 0),\n    reason: meta.exception_data.reason,\n    severity_hint: meta.exception_data.severity_hint,\n    carrier: meta.exception_data.carrier,\n    destination: meta.exception_data.destination\n  }\n}];"
+        "jsCode": "const meta = $('Build Classifier Payload').item.json;\nreturn [{\n  json: {\n    exception_id: meta.exception_id,\n    shipment_id: meta.shipment_id,\n    tracking_number: meta.tracking_number || '',\n    severity: $json.severity,\n    exception_type: $json.exception_type,\n    ai_suggestion: $json.suggested_action,\n    confidence: Number($json.confidence || 0),\n    fallback_used: Boolean($json.fallback_used),\n    fallback_reason: $json.fallback_reason,\n    model_used: $json.model_used,\n    escalate_to_manager: Boolean($json.escalate_to_manager),\n    classified_at: $json.classified_at,\n    overdue_hours: Number(meta.exception_data.overdue_hours || 0),\n    reason: meta.exception_data.reason,\n    severity_hint: meta.exception_data.severity_hint,\n    carrier: meta.exception_data.carrier,\n    destination: meta.exception_data.destination\n  }\n}];"
       },
-      "id": "enrich-classification-result",
+      "id": "c76771e2-191d-4bf0-a488-b074559ece6d",
       "name": "Enrich Classification Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1470,
-        260
+        1184,
+        0
       ]
     },
     {
@@ -117,39 +117,39 @@
           "queryReplacement": "={{[$json.severity, $json.ai_suggestion, $json.confidence, $json.fallback_used, $json.classified_at, $json.exception_id]}}"
         }
       },
-      "id": "update-exception-classification",
+      "id": "b2798937-6e79-446d-8618-5c1f569a3d7c",
       "name": "Update Exception Classification",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1700,
-        260
+        1424,
+        0
       ],
       "credentials": {
         "postgres": {
-          "id": "replace-with-postgres-credential-id",
-          "name": "Postgres Internal"
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://n8n:5678/webhook/wf3-notify",
+        "url": "http://n8n:5678/webhook/wf3-notify-v2",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { exception_id: $('Enrich Classification Result').item.json.exception_id, severity: $('Enrich Classification Result').item.json.severity, overdue_hours: $('Enrich Classification Result').item.json.overdue_hours, escalate_to_manager: $('Enrich Classification Result').item.json.escalate_to_manager, reason: $('Enrich Classification Result').item.json.reason, carrier: $('Enrich Classification Result').item.json.carrier, channels_sent: [] } }}",
+        "jsonBody": "={{ { exception_id: $('Enrich Classification Result').item.json.exception_id, severity: $('Enrich Classification Result').item.json.severity, overdue_hours: $('Enrich Classification Result').item.json.overdue_hours, escalate_to_manager: $('Enrich Classification Result').item.json.escalate_to_manager, reason: $('Enrich Classification Result').item.json.reason, carrier: $('Enrich Classification Result').item.json.carrier, exception_type: $('Enrich Classification Result').item.json.exception_type, ai_suggestion: $('Enrich Classification Result').item.json.ai_suggestion, tracking_number: $('Enrich Classification Result').item.json.tracking_number, channels_sent: [] } }}",
         "options": {
-          "timeout": 8000
+          "timeout": 30000
         }
       },
-      "id": "trigger-wf3",
+      "id": "70c4243c-286c-4655-bc60-cf1e5d46f03a",
       "name": "Trigger WF3",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1930,
-        260
+        1648,
+        0
       ]
     }
   ],
@@ -233,12 +233,16 @@
       ]
     }
   },
-  "active": false,
-  "settings": {},
-  "versionId": "wf2-s3-version-1",
-  "meta": {
-    "description": "WF2 for S3 scope: load context, classify with fallback, update exceptions, trigger WF3."
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
   },
-  "id": "wf2-s3-ai-classification",
+  "versionId": "8df5d69f-c85a-431e-8ca7-386f527b78e7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f1640d3210347b2677795f0a19ba15676844041479642c445388c5a4a858d18"
+  },
+  "id": "oBOmvKf7JvKsNl5l1oqLY",
   "tags": []
 }

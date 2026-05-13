@@ -1,5 +1,5 @@
 {
-  "name": "WF1 - Ingestion and Detection (S2)",
+  "name": "WF1 new",
   "nodes": [
     {
       "parameters": {
@@ -12,13 +12,13 @@
           ]
         }
       },
-      "id": "schedule-trigger",
+      "id": "dd26d067-669a-4b5b-9931-4af2ca9de22f",
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        280,
-        260
+        -912,
+        96
       ]
     },
     {
@@ -41,48 +41,48 @@
           "timeout": 10000
         }
       },
-      "id": "get-shipments",
+      "id": "3bd5b3ea-f8c1-41f5-a864-855b2ada9230",
       "name": "Get Shipments",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        500,
-        260
+        -688,
+        96
       ]
     },
     {
       "parameters": {
         "jsCode": "const required = [\"id\", \"tracking_number\", \"carrier\", \"destination\", \"status\", \"expected_delivery\", \"last_updated\"];\nconst items = $json.items || [];\nconst valid = items.filter((s) => required.every((f) => s[f] !== undefined && s[f] !== null));\nreturn valid.map((shipment) => ({ json: { shipment } }));"
       },
-      "id": "validate-shipments",
+      "id": "51cdb620-a174-4be4-abc4-157e2431e41c",
       "name": "Validate Shipment Fields",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        730,
-        260
+        -464,
+        96
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO shipments (\n  id, tracking_number, carrier, origin, destination,\n  expected_delivery, actual_delivery, status, failed_attempts, last_updated, created_at\n)\nVALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)\nON CONFLICT (tracking_number) DO UPDATE SET\n  carrier = EXCLUDED.carrier,\n  origin = EXCLUDED.origin,\n  destination = EXCLUDED.destination,\n  expected_delivery = EXCLUDED.expected_delivery,\n  actual_delivery = EXCLUDED.actual_delivery,\n  status = EXCLUDED.status,\n  failed_attempts = EXCLUDED.failed_attempts,\n  last_updated = EXCLUDED.last_updated\nRETURNING id, tracking_number;",
+        "query": "INSERT INTO shipments (\n  id, tracking_number, carrier, origin, destination,\n  expected_delivery, actual_delivery, status, failed_attempts, last_updated, created_at,\n  recipient_name, recipient_phone, recipient_address,\n  cod_amount, weight_kg, package_count, product_summary,\n  last_scan_location, last_scan_note\n)\nVALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, $12,$13,$14,$15,$16,$17,$18,$19,$20)\nON CONFLICT (tracking_number) DO UPDATE SET\n  carrier = EXCLUDED.carrier,\n  origin = EXCLUDED.origin,\n  destination = EXCLUDED.destination,\n  expected_delivery = EXCLUDED.expected_delivery,\n  actual_delivery = EXCLUDED.actual_delivery,\n  status = EXCLUDED.status,\n  failed_attempts = EXCLUDED.failed_attempts,\n  last_updated = EXCLUDED.last_updated,\n  recipient_name = COALESCE(EXCLUDED.recipient_name, shipments.recipient_name),\n  recipient_phone = COALESCE(EXCLUDED.recipient_phone, shipments.recipient_phone),\n  recipient_address = COALESCE(EXCLUDED.recipient_address, shipments.recipient_address),\n  cod_amount = COALESCE(EXCLUDED.cod_amount, shipments.cod_amount),\n  weight_kg = COALESCE(EXCLUDED.weight_kg, shipments.weight_kg),\n  package_count = COALESCE(EXCLUDED.package_count, shipments.package_count),\n  product_summary = COALESCE(EXCLUDED.product_summary, shipments.product_summary),\n  last_scan_location = COALESCE(EXCLUDED.last_scan_location, shipments.last_scan_location),\n  last_scan_note = COALESCE(EXCLUDED.last_scan_note, shipments.last_scan_note)\nRETURNING id, tracking_number;",
         "options": {
-          "queryReplacement": "={{[\n  $json.shipment.id,\n  $json.shipment.tracking_number,\n  $json.shipment.carrier,\n  $json.shipment.origin,\n  $json.shipment.destination,\n  $json.shipment.expected_delivery,\n  $json.shipment.actual_delivery,\n  $json.shipment.status,\n  $json.shipment.failed_attempts ?? 0,\n  $json.shipment.last_updated,\n  $json.shipment.created_at ?? $now.toISO()\n]}}"
+          "queryReplacement": "={{[\n  $json.shipment.id,\n  $json.shipment.tracking_number,\n  $json.shipment.carrier,\n  $json.shipment.origin,\n  $json.shipment.destination,\n  $json.shipment.expected_delivery,\n  $json.shipment.actual_delivery,\n  $json.shipment.status,\n  $json.shipment.failed_attempts ?? 0,\n  $json.shipment.last_updated,\n  $json.shipment.created_at ?? $now.toISO(),\n  $json.shipment.recipient_name ?? null,\n  $json.shipment.recipient_phone ?? null,\n  $json.shipment.recipient_address ?? null,\n  $json.shipment.cod_amount ?? null,\n  $json.shipment.weight_kg ?? null,\n  $json.shipment.package_count ?? null,\n  $json.shipment.product_summary ?? null,\n  $json.shipment.last_scan_location ?? null,\n  $json.shipment.last_scan_note ?? null\n]}}"
         }
       },
-      "id": "upsert-shipment",
+      "id": "6ade3971-de54-4fbb-914d-241947d31cf9",
       "name": "Upsert Shipment",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        970,
-        260
+        -224,
+        96
       ],
       "credentials": {
         "postgres": {
-          "id": "replace-with-postgres-credential-id",
-          "name": "Postgres Internal"
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
         }
       }
     },
@@ -93,18 +93,18 @@
         "key": "={{'processed:' + $node[\"Validate Shipment Fields\"].json.shipment.tracking_number}}",
         "options": {}
       },
-      "id": "redis-get",
+      "id": "4efbb4da-5ee0-47b1-aaec-f33ce1febf45",
       "name": "Redis Dedup Get",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
-        1200,
-        170
+        0,
+        96
       ],
       "credentials": {
         "redis": {
-          "id": "replace-with-redis-credential-id",
-          "name": "Redis Internal"
+          "id": "5hBcdEnfLY0XblVG",
+          "name": "Redis account"
         }
       }
     },
@@ -132,13 +132,13 @@
         },
         "options": {}
       },
-      "id": "if-cache-hit",
+      "id": "b02662c1-d64d-40e1-bae8-e10553bb782a",
       "name": "IF Cache Hit",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1410,
-        170
+        224,
+        96
       ]
     },
     {
@@ -152,13 +152,13 @@
           "timeout": 5000
         }
       },
-      "id": "detect-exception",
+      "id": "89392f05-b1e8-415a-a76d-c809c430fa19",
       "name": "Call Detector",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1200,
-        360
+        432,
+        240
       ]
     },
     {
@@ -195,13 +195,13 @@
         },
         "options": {}
       },
-      "id": "if-exception",
+      "id": "c105c2bc-58cd-4127-989d-4e1d9b481d97",
       "name": "IF Exception and Not Skipped",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1410,
-        360
+        640,
+        240
       ]
     },
     {
@@ -212,18 +212,18 @@
         "expire": true,
         "ttl": 3600
       },
-      "id": "redis-set",
+      "id": "1970cc07-bd43-4d0c-9fab-2874bbd0ab69",
       "name": "Redis Dedup Set TTL",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
       "position": [
-        1640,
-        300
+        864,
+        96
       ],
       "credentials": {
         "redis": {
-          "id": "replace-with-redis-credential-id",
-          "name": "Redis Internal"
+          "id": "5hBcdEnfLY0XblVG",
+          "name": "Redis account"
         }
       }
     },
@@ -231,13 +231,13 @@
       "parameters": {
         "jsCode": "const upsert = $('Upsert Shipment').item.json || {};\nreturn [{\n  json: {\n    shipment_id: upsert.id || $json.shipment_id,\n    tracking_number: upsert.tracking_number || $('Validate Shipment Fields').item.json.shipment.tracking_number,\n    exception_type: $json.exception_type,\n    reason: $json.reason,\n    severity_hint: $json.severity_hint,\n    overdue_hours: $json.overdue_hours || 0,\n    status: 'open',\n    detected_at: new Date().toISOString()\n  }\n}];"
       },
-      "id": "set-exception-payload",
+      "id": "b911ec1b-cf80-4012-bcac-e0ff2f66747c",
       "name": "Set Exception Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1860,
-        300
+        1056,
+        96
       ]
     },
     {
@@ -248,18 +248,18 @@
           "queryReplacement": "={{[$json.shipment_id, $json.exception_type, $json.reason, $json.severity_hint, $json.overdue_hours, $json.status, $json.detected_at]}}"
         }
       },
-      "id": "postgres-insert-exception",
+      "id": "e4496b46-d53f-428c-8883-ed63384666e9",
       "name": "Postgres Insert Exception",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2090,
-        300
+        1232,
+        96
       ],
       "credentials": {
         "postgres": {
-          "id": "replace-with-postgres-credential-id",
-          "name": "Postgres Internal"
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
         }
       }
     },
@@ -271,16 +271,16 @@
         "specifyBody": "json",
         "jsonBody": "={{ { exception_id: $json[0]?.id || $json.id } }}",
         "options": {
-          "timeout": 8000
+          "timeout": 30000
         }
       },
-      "id": "trigger-wf2",
+      "id": "2abc1abd-752a-4e17-af44-2142c85ad25f",
       "name": "Trigger WF2",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2310,
-        300
+        1408,
+        96
       ]
     }
   ],
@@ -360,8 +360,7 @@
             "type": "main",
             "index": 0
           }
-        ],
-        []
+        ]
       ]
     },
     "Redis Dedup Set TTL": {
@@ -397,7 +396,6 @@
         ]
       ]
     },
-    "Trigger WF2": { "main": [] },
     "IF Cache Hit": {
       "main": [
         [],
@@ -411,12 +409,16 @@
       ]
     }
   },
-  "active": false,
-  "settings": {},
-  "versionId": "wf1-s2-version-1",
-  "meta": {
-    "description": "WF1 for S2 scope: ingestion, dedup, detect, insert exception, trigger WF2."
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
   },
-  "id": "wf1-s2-ingestion-detection",
+  "versionId": "bdfd24a6-309d-436a-81dd-b8b838b6721b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f1640d3210347b2677795f0a19ba15676844041479642c445388c5a4a858d18"
+  },
+  "id": "063CG_inWPCz2jO9Wu8Hi",
   "tags": []
 }

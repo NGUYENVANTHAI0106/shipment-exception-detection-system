@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
-
-from services.classifier.core import classify_with_fallback
+from services.classifier.core import classify_by_rules
 
 
 def base_exception_data() -> dict:
     return {
         "exception_type": "delay",
-        "reason": "Overdue by 36.5 hours — expected 2026-04-20 08:00",
+        "reason": "Trễ hạn giao 36.5 giờ — dự kiến 2026-04-20 08:00",
         "severity_hint": "HIGH",
         "overdue_hours": 36.5,
         "carrier": "GHN",
@@ -17,53 +15,22 @@ def base_exception_data() -> dict:
     }
 
 
-def base_history() -> dict:
-    return {
-        "previous_exception_count": 2,
-        "last_exception_type": "stuck",
-        "shipment_age_days": 3,
-    }
-
-
-def fake_gemini_success(_exception_data: dict, _history: dict) -> str:
-    return json.dumps(
-        {
-            "severity": "CRITICAL",
-            "exception_type": "delay",
-            "suggested_action": "Call GHN priority desk and confirm ETA in 1 hour.",
-            "escalate_to_manager": True,
-            "confidence": 0.91,
-        }
-    )
-
-
-def fake_gemini_invalid_json(_exception_data: dict, _history: dict) -> str:
-    return "{invalid_json"
-
-
 def run_smoke_tests() -> None:
-    success = classify_with_fallback(
-        exception_data=base_exception_data(),
-        history=base_history(),
-        call_claude_api=fake_gemini_success,
-        model_name="gemini-1.5-flash",
-    )
-    assert success["fallback_used"] is False
-    assert success["severity"] == "CRITICAL"
-    assert success["model_used"] == "gemini-1.5-flash"
+    result = classify_by_rules(base_exception_data())
+    assert result["fallback_used"] is False
+    assert result["severity"] == "HIGH"
+    assert result["model_used"] == "rule_engine"
+    assert result["exception_type"] == "delay"
+    assert isinstance(result["suggested_action"], str) and result["suggested_action"]
 
-    fallback = classify_with_fallback(
-        exception_data=base_exception_data(),
-        history=base_history(),
-        call_claude_api=fake_gemini_invalid_json,
-        model_name="gemini-1.5-flash",
-    )
-    assert fallback["fallback_used"] is True
-    assert fallback["severity"] == "HIGH"
-    assert fallback["model_used"] == "rule_based_fallback"
-    assert isinstance(fallback["fallback_reason"], str)
+    escalated = classify_by_rules({**base_exception_data(), "severity_hint": "CRITICAL"})
+    assert escalated["severity"] == "CRITICAL"
+    assert escalated["escalate_to_manager"] is True
 
-    print("S3 classifier smoke tests passed: 2/2")
+    high_attempts = classify_by_rules({**base_exception_data(), "failed_attempts": 3})
+    assert high_attempts["escalate_to_manager"] is True
+
+    print("S3 classifier smoke tests passed: 3/3")
 
 
 if __name__ == "__main__":

@@ -1,18 +1,17 @@
-import { BarChart3, Package, RefreshCw, Search, User } from "lucide-react";
+import { LayoutDashboard, LogOut, Package, User } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { user, logout } = useAuth();
-  const scope: "ops" | "employee" | "manager" =
-    user?.role === "employee" ? "employee" : user?.role === "manager" ? "manager" : "ops";
-  const isActive = (path: string) => {
-    if (path === `/${scope}/dashboard`) {
-      return location.pathname === "/" || location.pathname.startsWith(`/${scope}/dashboard`);
-    }
-    return location.pathname.startsWith(path);
-  };
+
+  const navItems = [
+    { to: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
+    { to: "/exceptions", label: "Đơn có vấn đề", icon: Package },
+  ];
+
+  const isActive = (to: string) => location.pathname === to || location.pathname.startsWith(`${to}/`);
 
   return (
     <div className="app-shell">
@@ -20,49 +19,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="brand">
           <Package size={22} />
           <div>
-            <strong>Shipment Exception</strong>
-            <small>Operations</small>
+            <strong>Vận hành đơn hàng</strong>
+            <small>Trung tâm xử lý sự cố</small>
           </div>
         </div>
         <nav className="sidebar-nav">
-          <Link to={`/${scope}/dashboard`} className={`nav-item ${isActive(`/${scope}/dashboard`) ? "active" : ""}`}>
-            <Package size={16} />
-            {scope === "manager" ? "Manager Queue" : "Ngoại lệ"}
-          </Link>
-          {scope === "ops" && (
-            <Link to="/ops/analytics" className={`nav-item ${isActive("/ops/analytics") ? "active" : ""}`}>
-              <BarChart3 size={16} />
-              Phân tích
+          {navItems.map(({ to, label, icon: Icon }) => (
+            <Link key={to} to={to} className={`nav-item ${isActive(to) ? "active" : ""}`}>
+              <Icon size={16} />
+              {label}
             </Link>
-          )}
+          ))}
         </nav>
-        <div className="sidebar-footer">© 2026 Shipment Ops</div>
-      </aside>
-      <main className="content">
-        <header className="topbar">
-          <div className="search-wrap">
-            <Search size={16} />
-            <input placeholder="Tìm theo mã tracking..." />
-          </div>
-          <button className="btn btn-primary">
-            <RefreshCw size={14} />
-            Làm mới
-          </button>
-          <div className="user-wrap">
+        <div className="sidebar-footer">
+          <div className="v2-user">
+            <span className="v2-avatar">
+              <User size={14} />
+            </span>
             <div>
               <strong>{user?.display_name || "Người dùng"}</strong>
-              <small>{scope === "ops" ? "Vận hành" : scope === "manager" ? "Quản lý" : "Nhân viên"}</small>
+              <small>Tài khoản: {user?.username || "—"}</small>
             </div>
-            <span className="avatar">
-              <User size={15} />
-            </span>
           </div>
-          <button className="btn btn-secondary" onClick={logout}>
+          <button className="v2-logout" onClick={logout} type="button">
+            <LogOut size={13} />
             Đăng xuất
           </button>
-        </header>
-        {children}
-      </main>
+        </div>
+      </aside>
+      <main className="content">{children}</main>
     </div>
   );
 }

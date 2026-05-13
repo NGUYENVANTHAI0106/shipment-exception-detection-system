@@ -43,23 +43,38 @@ def route_channels(severity: str, overdue_hours: float) -> NotifyDecision:
     raise ValueError("unsupported_severity")
 
 
+def _format_suggestion(payload: dict) -> str:
+    raw = (payload.get("ai_suggestion") or "").strip()
+    return raw if raw else "Chưa có gợi ý"
+
+
 def build_ops_message(payload: dict) -> str:
+    eid = str(payload.get("exception_id", "unknown"))
+    tracking = (payload.get("tracking_number") or "").strip()
+    exc_type = str(payload.get("exception_type", "unknown"))
+    type_line = "" if exc_type in ("", "unknown", "manual_test") else f"- Loại: `{exc_type}`\n"
+    tracking_line = f"- Mã vận đơn: `{tracking}`\n" if tracking else ""
     return (
-        "🚚 *Shipment Exception Alert*\n"
-        f"- Exception ID: `{payload.get('exception_id', 'unknown')}`\n"
-        f"- Severity: *{payload.get('severity', 'UNKNOWN')}*\n"
-        f"- Type: `{payload.get('exception_type', 'unknown')}`\n"
-        f"- Carrier: `{payload.get('carrier', 'unknown')}`\n"
-        f"- Reason: {payload.get('reason', 'n/a')}\n"
-        f"- Suggested action: {payload.get('ai_suggestion', 'n/a')}"
+        "🚚 *Cảnh báo đơn có vấn đề*\n"
+        f"{tracking_line}"
+        f"- Mã case: `{eid}`\n"
+        f"- Mức độ: *{payload.get('severity', 'UNKNOWN')}*\n"
+        f"{type_line}"
+        f"- Hãng: `{payload.get('carrier', 'unknown')}`\n"
+        f"- Lý do: {payload.get('reason', 'n/a')}\n"
+        f"- Gợi ý xử lý: {_format_suggestion(payload)}"
     )
 
 
 def build_manager_escalation_message(payload: dict) -> str:
+    eid = str(payload.get("exception_id", "unknown"))
+    tracking = (payload.get("tracking_number") or "").strip()
+    tracking_line = f"- Mã vận đơn: `{tracking}`\n" if tracking else ""
     return (
-        "🚨 *Escalation Required*\n"
-        f"- Exception ID: `{payload.get('exception_id', 'unknown')}`\n"
-        f"- Severity: *{payload.get('severity', 'UNKNOWN')}*\n"
-        f"- Overdue hours: `{payload.get('overdue_hours', 0)}`\n"
-        f"- Reason: {payload.get('reason', 'n/a')}"
+        "🚨 *Cần ưu tiên xử lý*\n"
+        f"{tracking_line}"
+        f"- Mã case: `{eid}`\n"
+        f"- Mức độ: *{payload.get('severity', 'UNKNOWN')}*\n"
+        f"- Trễ giao (giờ): `{payload.get('overdue_hours', 0)}`\n"
+        f"- Lý do: {payload.get('reason', 'n/a')}"
     )

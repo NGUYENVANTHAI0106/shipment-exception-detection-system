@@ -75,6 +75,7 @@ class NotifyRequest(BaseModel):
     overdue_hours: float = 0
     reason: str = ""
     ai_suggestion: str = ""
+    tracking_number: str = ""
     carrier: str = "unknown"
     is_already_notified: bool = False
     dry_run: bool = False
@@ -87,7 +88,21 @@ class EscalateRequest(BaseModel):
     severity: str
     overdue_hours: float = 0
     reason: str = ""
+    tracking_number: str = ""
     carrier: str = "unknown"
+    dry_run: bool = False
+
+
+class CustomerNotifyRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    exception_id: str
+    tracking_number: str = ""
+    recipient_name: str = ""
+    recipient_phone: str = ""
+    title: str
+    body: str
+    template: str = "generic"
     dry_run: bool = False
 
 
@@ -214,6 +229,48 @@ def notify(payload: NotifyRequest) -> dict:
         "email_sent_to": email_sent_to,
         "is_escalated": decision.is_escalated,
         "skipped_reason": skipped_reason,
+    }
+
+
+TELEGRAM_CUSTOMER_CHAT_ID = os.getenv("TELEGRAM_CUSTOMER_CHAT_ID", "") or TELEGRAM_OPS_CHAT_ID
+
+
+@app.post("/notify-customer")
+def notify_customer(payload: CustomerNotifyRequest) -> dict:
+    """Mô phỏng kênh thông báo cho khách hàng. Trong prod sẽ là SMS/Zalo OA.
+
+    Demo: gửi tin nhắn vào Telegram channel của khách (cùng channel ops nếu chưa cấu hình
+    riêng), kèm email nếu có.
+    """
+    message = (
+        "📨 *Thông báo cho khách hàng*\n"
+        f"- Mã vận đơn: `{payload.tracking_number or '-'}`\n"
+        f"- Khách: {payload.recipient_name or '-'} ({payload.recipient_phone or '-'})\n"
+        f"- Template: `{payload.template}`\n"
+        f"- Tiêu đề: *{payload.title}*\n"
+        f"- Nội dung: {payload.body}"
+    )
+
+    telegram_id: str | None = None
+    channels_sent: list[str] = []
+    try:
+        telegram_id = _send_telegram(TELEGRAM_CUSTOMER_CHAT_ID, message, payload.dry_run)
+        channels_sent.append("telegram_customer")
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "success": False,
+            "channel": "telegram_customer",
+            "channels_sent": [],
+            "error": f"telegram_failed:{exc}",
+        }
+
+    return {
+        "success": True,
+        "channel": "telegram_customer",
+        "channels_sent": channels_sent,
+        "telegram_message_id": telegram_id,
+        "title": payload.title,
+        "body": payload.body,
     }
 
 

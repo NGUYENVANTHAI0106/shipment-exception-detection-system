@@ -17,13 +17,17 @@ def evaluate_rule(shipment: dict, now: datetime | None = None) -> dict:
 
     if status == "failed" or failed_attempts >= 2:
         severity = "CRITICAL" if failed_attempts >= 3 else "HIGH"
+        overdue_after_expected = 0.0
+        exp = shipment.get("expected_delivery")
+        if exp is not None:
+            overdue_after_expected = round(max(0.0, hours_between(now_utc, exp)), 2)
         return {
             "shipment_id": shipment["id"],
             "is_exception": True,
             "exception_type": "failed_delivery",
-            "reason": f"Delivery failed after {failed_attempts} attempt(s)",
+            "reason": f"Đã giao thất bại {failed_attempts} lần",
             "severity_hint": severity,
-            "overdue_hours": 0.0,
+            "overdue_hours": overdue_after_expected,
             "skipped": False,
         }
 
@@ -34,9 +38,9 @@ def evaluate_rule(shipment: dict, now: datetime | None = None) -> dict:
             "shipment_id": shipment["id"],
             "is_exception": True,
             "exception_type": "stuck",
-            "reason": f"No status update for {hours_since_last_update:.0f} hours",
+            "reason": f"Không có cập nhật trạng thái trong {hours_since_last_update:.0f} giờ",
             "severity_hint": severity,
-            "overdue_hours": 0.0,
+            "overdue_hours": round(hours_since_last_update, 2),
             "skipped": False,
         }
 
@@ -52,20 +56,21 @@ def evaluate_rule(shipment: dict, now: datetime | None = None) -> dict:
             "shipment_id": shipment["id"],
             "is_exception": True,
             "exception_type": "delay",
-            "reason": f"Overdue by {overdue_hours:.1f} hours — expected {shipment['expected_delivery']:%Y-%m-%d %H:%M}",
+            "reason": f"Trễ giao {overdue_hours:.1f} giờ — dự kiến giao {shipment['expected_delivery']:%H:%M %d/%m/%Y}",
             "severity_hint": severity,
             "overdue_hours": round(overdue_hours, 2),
             "skipped": False,
         }
 
     if status == "address_issue":
+        hours_since_last_update = hours_between(now_utc, shipment["last_updated"])
         return {
             "shipment_id": shipment["id"],
             "is_exception": True,
             "exception_type": "address_issue",
-            "reason": f"Carrier cannot verify delivery address for {shipment['destination']}",
+            "reason": f"Hãng vận chuyển không xác minh được địa chỉ tại {shipment['destination']}",
             "severity_hint": "HIGH",
-            "overdue_hours": 0.0,
+            "overdue_hours": round(hours_since_last_update, 2),
             "skipped": False,
         }
 

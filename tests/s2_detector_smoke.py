@@ -36,6 +36,7 @@ def run_smoke_tests() -> None:
     assert result_1["is_exception"] is True
     assert result_1["exception_type"] == "failed_delivery"
     assert result_1["severity_hint"] == "CRITICAL"
+    assert result_1["overdue_hours"] == 4.0
 
     # Case 2: no exception
     shipment_2 = make_shipment(
@@ -49,6 +50,19 @@ def run_smoke_tests() -> None:
     assert result_2["is_exception"] is False
     assert result_2["skipped"] is False
 
+    # Case 2b: stuck (no update > 48h) — overdue_hours should reflect staleness, not 0
+    shipment_stuck = make_shipment(
+        "00000000-0000-0000-0000-000000000099",
+        status="in_transit",
+        failed_attempts=0,
+        expected_delivery_hours_ago=8,
+        last_updated_hours_ago=60,
+    )
+    result_stuck = evaluate_rule(shipment_stuck)
+    assert result_stuck["is_exception"] is True
+    assert result_stuck["exception_type"] == "stuck"
+    assert float(result_stuck["overdue_hours"]) >= 59.0
+
     # Case 3: simulated dedup skip contract shape
     result_3 = {
         "shipment_id": "00000000-0000-0000-0000-000000000003",
@@ -59,7 +73,7 @@ def run_smoke_tests() -> None:
     assert result_3["skipped"] is True
     assert result_3["skip_reason"] == "already_processed_in_cache"
 
-    print("S2 detector smoke tests passed: 3/3")
+    print("S2 detector smoke tests passed: 4/4")
 
 
 if __name__ == "__main__":

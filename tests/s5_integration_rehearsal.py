@@ -4,7 +4,7 @@ import json
 import urllib.error
 import urllib.request
 
-from services.classifier.core import classify_with_fallback
+from services.classifier.core import classify_by_rules
 import services.notifier.main as notifier_main
 
 
@@ -58,31 +58,13 @@ def test_detector_down_edge_case() -> None:
         pass
 
 
-def test_classifier_timeout_and_invalid_json_fallback() -> None:
-    def timeout_call(_exception: dict, _history: dict) -> str:
-        raise TimeoutError("classifier_timeout")
-
-    timeout_result = classify_with_fallback(
-        exception_data=_base_exception(),
-        history=_base_history(),
-        call_claude_api=timeout_call,
-        model_name="gemini-2.5-flash",
-    )
-    assert timeout_result["fallback_used"] is True
-    assert timeout_result["model_used"] == "rule_based_fallback"
-    assert "classifier_timeout" in timeout_result["fallback_reason"]
-
-    def invalid_json_call(_exception: dict, _history: dict) -> str:
-        return "{invalid_json"
-
-    invalid_result = classify_with_fallback(
-        exception_data=_base_exception(),
-        history=_base_history(),
-        call_claude_api=invalid_json_call,
-        model_name="gemini-2.5-flash",
-    )
-    assert invalid_result["fallback_used"] is True
-    assert invalid_result["severity"] == "HIGH"
+def test_classifier_rule_engine() -> None:
+    result = classify_by_rules(_base_exception())
+    assert result["fallback_used"] is False
+    assert result["model_used"] == "rule_engine"
+    assert result["severity"] == "HIGH"
+    assert result["escalate_to_manager"] is True  # overdue_hours=65 >= 48
+    assert isinstance(result["suggested_action"], str) and result["suggested_action"]
 
 
 def test_wf3_duplicate_trigger_skip() -> None:
@@ -145,7 +127,7 @@ def test_telegram_fail_email_fallback() -> None:
 
 def main() -> None:
     test_detector_down_edge_case()
-    test_classifier_timeout_and_invalid_json_fallback()
+    test_classifier_rule_engine()
     test_wf3_duplicate_trigger_skip()
     test_telegram_fail_email_fallback()
     print("S5 integration rehearsal passed: 4/4")

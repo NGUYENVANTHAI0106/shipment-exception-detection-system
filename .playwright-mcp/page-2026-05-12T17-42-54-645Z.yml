@@ -1,0 +1,18 @@
+- generic [ref=e4]:
+  - heading "Đăng nhập hệ thống" [level=1] [ref=e5]
+  - paragraph [ref=e6]: Sử dụng tài khoản phân vai trò Ops, Quản lý hoặc Nhân viên.
+  - generic [ref=e7]:
+    - text: Tài khoản
+    - textbox "Tài khoản" [ref=e8]:
+      - /placeholder: ops, manager hoặc employee
+      - text: ops
+  - generic [ref=e9]:
+    - text: Mật khẩu
+    - textbox "Mật khẩu" [ref=e10]:
+      - /placeholder: Nhập mật khẩu
+      - text: ops123
+  - button "Đăng nhập" [ref=e11] [cursor=pointer]
+  - generic [ref=e12]:
+    - generic [ref=e13]: "Ops: ops / ops123"
+    - generic [ref=e14]: "Quản lý: manager / manager123"
+    - generic [ref=e15]: "Nhân viên: employee / employee123"

@@ -2,32 +2,39 @@ import {
   AlertTriangle,
   ArrowLeft,
   Calendar,
+  CheckCircle2,
   ChevronRight,
+  ClipboardList,
   Clock,
-  MapPin,
   Package,
+  Phone,
+  Radio,
+  RotateCcw,
   Save,
-  Siren,
+  ShieldAlert,
   Sparkles,
-  TrendingUp,
+  User,
+  UserRound,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
-import { useAuth } from "../auth";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
 import {
-  assignException,
-  claimException,
+  buildCaseInsight,
+  formatExceptionType,
+  formatReason,
+  formatShipmentStatus,
+  getOverdueUiParts,
+  getSlaLabel,
+} from "../lib/caseIntelligence";
+import {
   getExceptionById,
   listAuditLogs,
-  managerAcceptReview,
-  managerApproveClose,
-  managerReturnToOps,
-  manualEscalate,
+  notifyCustomer,
   updateException,
 } from "../lib/exceptionService";
-import type { ExceptionItem, ExceptionStatus } from "../types";
+import type { CustomerTemplate, ExceptionItem, ExceptionStatus } from "../types";
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString("vi-VN", {
@@ -39,50 +46,41 @@ function formatDate(dateStr: string) {
   });
 }
 
-function formatExceptionType(type: ExceptionItem["exception_type"]) {
-  if (type === "delay") return "Trễ hạn";
-  if (type === "failed_delivery") return "Giao thất bại";
-  if (type === "address_issue") return "Địa chỉ";
-  return "Kẹt";
+const ACTION_LABEL: Record<string, string> = {
+  detected: "Phát hiện vấn đề",
+  classified: "Phân loại tự động",
+  notified: "Gửi cảnh báo nội bộ",
+  escalated: "Escalate quản lý",
+  claimed_from_web: "Nhận xử lý",
+  updated_from_web: "Cập nhật từ trang web",
+  customer_notified: "Đã liên hệ khách",
+  auto_resolved: "Tự đóng do đã giao xong",
+};
+
+function formatVnd(amount: number | null | undefined) {
+  if (!amount || amount <= 0) return "Không thu hộ";
+  return new Intl.NumberFormat("vi-VN").format(amount) + " ₫";
+}
+
+function customerTemplateLabel(item: ExceptionItem): { template: CustomerTemplate; label: string } {
+  if (item.exception_type === "address_issue") {
+    return { template: "verify_address", label: "Đã nhắn khách xác minh địa chỉ" };
+  }
+  if (item.exception_type === "failed_delivery") {
+    return { template: "confirm_failed", label: "Đã nhắn khách chốt phương án giao lại" };
+  }
+  return { template: "reschedule", label: "Đã nhắn khách hẹn giao lại" };
 }
 
 export function ExceptionDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const location = useLocation();
-  const { user } = useAuth();
-  const scope: "ops" | "employee" | "manager" = location.pathname.startsWith("/employee/")
-    ? "employee"
-    : location.pathname.startsWith("/manager/")
-      ? "manager"
-      : "ops";
-  const canTransfer = scope === "ops";
-  const canRequestSupport = scope === "ops" || scope === "employee";
-  const isManager = scope === "manager";
-  const canStandardActions = !isManager;
   const [item, setItem] = useState<ExceptionItem | null>(null);
+  const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<ExceptionStatus>("open");
   const [note, setNote] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [assignedTeam, setAssignedTeam] = useState("ops");
-  const [managerReason, setManagerReason] = useState("");
   const [auditEvents, setAuditEvents] = useState<Array<{ timestamp: string; event: string; description: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-
-  const actionLabel: Record<string, string> = {
-    detected: "Phát hiện ngoại lệ",
-    classified: "Phân loại tự động",
-    notified: "Gửi cảnh báo",
-    escalated: "Leo thang hệ thống",
-    claimed_from_web: "Nhận xử lý",
-    assigned_from_web: "Chuyển người xử lý",
-    requested_manager_support_from_web: "Yêu cầu quản lý hỗ trợ",
-    updated_from_web: "Cập nhật từ web",
-    manager_in_progress: "Quản lý tiếp nhận duyệt",
-    manager_returned_to_ops: "Quản lý trả lại vận hành",
-    manager_resolved: "Quản lý phê duyệt đóng",
-    view_detail: "Xem chi tiết",
-  };
 
   const refreshData = async (exceptionId: string) => {
     const [detail, audits] = await Promise.all([getExceptionById(exceptionId), listAuditLogs(exceptionId)]);
@@ -90,263 +88,370 @@ export function ExceptionDetailPage() {
       setItem(detail);
       setStatus(detail.status);
       setNote(detail.resolution_note || "");
-      setAssignee(detail.assignee || "");
-      setAssignedTeam(detail.assigned_team || "ops");
     }
-    setAuditEvents(
-      audits.map((log) => {
+    const cleaned = audits
+      .map((log) => {
         const meta = log.metadata || {};
-        const reason = typeof meta.reason === "string" ? meta.reason : "";
+        const reason = typeof meta.reason === "string" ? meta.reason.trim() : "";
         const actor = log.actor || "system";
+        const oldMeta = typeof meta.old === "object" && meta.old ? (meta.old as Record<string, unknown>) : null;
+        const newMeta = typeof meta.new === "object" && meta.new ? (meta.new as Record<string, unknown>) : null;
+        const oldStatus = oldMeta?.status ? String(oldMeta.status) : "";
+        const newStatus = newMeta?.status ? String(newMeta.status) : "";
+        const hasTransition = Boolean(oldStatus && newStatus && oldStatus !== newStatus);
+        const description = reason
+          ? `${reason}${hasTransition ? ` • ${oldStatus} → ${newStatus}` : ""} (actor: ${actor})`
+          : hasTransition
+            ? `${oldStatus} → ${newStatus} • Actor: ${actor}`
+            : `Actor: ${actor}`;
         return {
           timestamp: log.created_at,
-          event: actionLabel[log.action] || log.action,
-          description: reason ? `${reason} (actor: ${actor})` : `Actor: ${actor}`,
+          event: ACTION_LABEL[log.action] || log.action,
+          description,
         };
-      }),
-    );
+      })
+      .slice(0, 20);
+
+    setAuditEvents(cleaned);
   };
 
   useEffect(() => {
     if (!id) return;
+    let active = true;
+    setLoading(true);
     refreshData(id)
       .catch((err) => {
-        setMessage(err instanceof Error ? err.message : "Không tải được chi tiết ngoại lệ.");
+        if (!active) return;
+        setMessage(err instanceof Error ? err.message : "Không tải được chi tiết case.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
+    return () => {
+      active = false;
+    };
   }, [id]);
 
-  if (!item) {
+  const handleSave = async () => {
+    if (!item) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await updateException(item.id, { status, resolution_note: note });
+      if (!updated) {
+        setMessage("Lưu thất bại. Vui lòng thử lại.");
+        return;
+      }
+      setItem(updated);
+      await refreshData(item.id);
+      setMessage("Đã lưu cập nhật case.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Lưu thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClose = async () => {
+    if (!item) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await updateException(item.id, { status: "resolved", resolution_note: note });
+      if (updated) {
+        setItem(updated);
+        setStatus(updated.status);
+      }
+      await refreshData(item.id);
+      setMessage("Đã đóng case.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Đóng case thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReopen = async () => {
+    if (!item) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await updateException(item.id, { status: "in_progress" });
+      if (updated) {
+        setItem(updated);
+        setStatus(updated.status);
+      }
+      await refreshData(item.id);
+      setMessage("Đã mở lại case.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Mở lại thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCustomerNotify = async () => {
+    if (!item) return;
+    const { template, label } = customerTemplateLabel(item);
+    setSaving(true);
+    setMessage(null);
+    try {
+      const result = await notifyCustomer(item.id, template);
+      if (result.exception) {
+        setItem(result.exception);
+        setStatus(result.exception.status);
+        setNote(result.exception.resolution_note || "");
+      }
+      await refreshData(item.id);
+      if (result.delivery.success) {
+        setMessage(`${label} (Telegram đã gửi).`);
+      } else {
+        setMessage(`${label}, nhưng kênh gửi gặp lỗi: ${result.delivery.error || "không rõ"}.`);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Gửi thông báo khách thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const logAction = async (action: string) => {
+    if (!item) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const time = new Date().toLocaleString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        day: "2-digit",
+        month: "2-digit",
+      });
+      const line = `[${time}] ${action}`;
+      const nextNote = note.trim() ? `${note.trim()}\n${line}` : line;
+      const nextStatus: ExceptionStatus = status === "open" ? "in_progress" : status;
+      const updated = await updateException(item.id, {
+        status: nextStatus,
+        resolution_note: nextNote,
+      });
+      if (updated) {
+        setItem(updated);
+        setStatus(updated.status);
+        setNote(updated.resolution_note || nextNote);
+      } else {
+        setNote(nextNote);
+      }
+      await refreshData(item.id);
+      setMessage(`Đã ghi nhận: ${action}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Ghi nhận thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const insight = useMemo(() => (item ? buildCaseInsight(item) : null), [item]);
+  const sla = item ? getSlaLabel(item) : null;
+  const overdueUi = item ? getOverdueUiParts(item) : null;
+
+  if (loading) {
     return (
       <div className="page-container">
         <section className="card">
-          <p className="empty">Không tìm thấy ngoại lệ.</p>
-          <Link to={`/${scope}/dashboard`} className="details-link">
-            Quay lại bảng điều khiển
+          <p className="empty">Đang tải trang xử lý case...</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!item || !insight || !sla || !overdueUi) {
+    return (
+      <div className="page-container">
+        <section className="card">
+          <p className="empty">Không tìm thấy case.</p>
+          <Link to="/exceptions" className="details-link">
+            Quay lại danh sách
           </Link>
         </section>
       </div>
     );
   }
 
-  const handleSave = async () => {
-    setSaving(true);
-    setMessage(null);
-    try {
-      const updated = await updateException(item.id, { status, resolution_note: note });
-      setSaving(false);
-      if (!updated) {
-        setMessage("Lưu thất bại. Vui lòng kiểm tra kết nối API.");
-        return;
-      }
-      setItem(updated);
-      await refreshData(item.id);
-      setMessage("Đã lưu trạng thái và ghi chú xử lý.");
-    } catch (err) {
-      setSaving(false);
-      setMessage(err instanceof Error ? err.message : "Lưu thất bại.");
-    }
-  };
-
-  const handleEscalate = async () => {
-    setSaving(true);
-    setMessage(null);
-    try {
-      const ok = await manualEscalate(item.id);
-      if (!ok) {
-        setMessage("Leo thang thất bại.");
-        setSaving(false);
-        return;
-      }
-      const refreshed = await getExceptionById(item.id);
-      if (refreshed) setItem(refreshed);
-      await refreshData(item.id);
-      setSaving(false);
-      setMessage("Đã gửi yêu cầu quản lý hỗ trợ.");
-    } catch (err) {
-      setSaving(false);
-      setMessage(err instanceof Error ? err.message : "Leo thang thất bại.");
-    }
-  };
-
-  const handleClaim = async () => {
-    setSaving(true);
-    setMessage(null);
-    try {
-      const updated = await claimException(item.id);
-      if (updated) {
-        setItem(updated);
-        setStatus(updated.status);
-        setAssignee(updated.assignee || "");
-      }
-      await refreshData(item.id);
-      setMessage("Đã nhận xử lý ngoại lệ.");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Nhận xử lý thất bại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAssign = async () => {
-    if (!assignee.trim()) {
-      setMessage("Vui lòng nhập người xử lý.");
-      return;
-    }
-    setSaving(true);
-    setMessage(null);
-    try {
-      const updated = await assignException(item.id, { assignee: assignee.trim(), assigned_team: assignedTeam });
-      if (updated) {
-        setItem(updated);
-        setStatus(updated.status);
-      }
-      await refreshData(item.id);
-      setMessage("Đã chuyển người xử lý.");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Chuyển người xử lý thất bại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const runManagerAction = async (mode: "accept" | "return" | "approve") => {
-    if (!managerReason.trim()) {
-      setMessage("Vui lòng nhập lý do bắt buộc cho thao tác quản lý.");
-      return;
-    }
-    setSaving(true);
-    setMessage(null);
-    try {
-      const action =
-        mode === "accept"
-          ? managerAcceptReview
-          : mode === "return"
-            ? managerReturnToOps
-            : managerApproveClose;
-      const updated = await action(item.id, managerReason.trim());
-      if (updated) {
-        setItem(updated);
-        setStatus(updated.status);
-      }
-      await refreshData(item.id);
-      setManagerReason("");
-      setMessage(
-        mode === "accept"
-          ? "Quản lý đã tiếp nhận duyệt."
-          : mode === "return"
-            ? "Quản lý đã trả case lại vận hành."
-            : "Quản lý đã phê duyệt đóng case.",
-      );
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Thao tác quản lý thất bại.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  const isResolved = item.status === "resolved";
 
   return (
     <div className="page-container fm-detail-page">
       <div className="fm-breadcrumb">
-        <Link to={`/${scope}/dashboard`}>Ngoại lệ</Link>
+        <Link to="/exceptions">Đơn hàng có vấn đề</Link>
         <ChevronRight size={14} />
-        <span>Chi tiết</span>
+        <span>Trang xử lý</span>
       </div>
-      <Link to={`/${scope}/dashboard`} className="fm-back-link">
+      <Link to="/exceptions" className="fm-back-link">
         <ArrowLeft size={14} />
         Quay lại danh sách
       </Link>
 
+      <section className="fm-hero-card">
+        <div className="fm-hero-main">
+          <div>
+            <div className="fm-inline fm-hero-badges">
+              <SeverityBadge severity={item.severity} />
+              <StatusBadge status={status} />
+              <span className={`status-pill ${sla.className}`}>{sla.text}</span>
+            </div>
+            <h1 className="fm-code-title">{item.tracking_number}</h1>
+            <p className="fm-hero-title">{insight.headline}</p>
+          </div>
+        </div>
+        <div className="fm-hero-metrics">
+          <div className="fm-icon-row">
+            <Package size={17} />
+            <div>
+              <p>Hãng / tuyến giao</p>
+              <strong>{item.carrier}</strong>
+              <small>
+                {item.origin} {"->"} {item.destination}
+              </small>
+            </div>
+          </div>
+          <div className="fm-icon-row">
+            <Clock size={17} />
+            <div>
+              <p>{overdueUi.label}</p>
+              <strong>{overdueUi.valueText}</strong>
+              <small>{item.expected_delivery ? `Dự kiến giao cũ: ${formatDate(item.expected_delivery)}` : "Chưa có dự kiến giao"}</small>
+            </div>
+          </div>
+          <div className="fm-icon-row">
+            <Radio size={17} />
+            <div>
+              <p>Trạng thái đơn hàng</p>
+              <strong>{formatShipmentStatus(item.shipment_status)}</strong>
+              <small>
+                {item.shipment_last_updated ? `Vận đơn cập nhật: ${formatDate(item.shipment_last_updated)}` : "Chưa có cập nhật vận đơn"}
+              </small>
+            </div>
+          </div>
+          <div className="fm-icon-row">
+            <UserRound size={17} />
+            <div>
+              <p>Số lần giao thất bại</p>
+              <strong>{item.failed_attempts ?? 0}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="fm-detail-grid">
         <div className="fm-left-col">
           <section className="fm-card">
-            <div className="fm-summary-head">
-              <div>
-                <h1 className="fm-code-title">{item.tracking_number}</h1>
-                <div className="fm-inline">
-                  <SeverityBadge severity={item.severity} />
-                  <span className="fm-dot">•</span>
-                  <span className="fm-type-text">{formatExceptionType(item.exception_type)}</span>
-                </div>
+            <h2 className="fm-section-title">
+              <User size={17} />
+              Thông tin khách hàng
+            </h2>
+            <div className="fm-customer-grid">
+              <div className="fm-customer-cell">
+                <small>Người nhận</small>
+                <strong>{item.recipient_name || "Chưa có"}</strong>
               </div>
-              <div className="fm-status-col">
-                <p>Trạng thái xử lý</p>
-                <StatusBadge status={status} />
+              <div className="fm-customer-cell">
+                <small>Số điện thoại</small>
+                <strong>
+                  {item.recipient_phone ? (
+                    <a href={`tel:${item.recipient_phone}`} className="fm-tel">
+                      <Phone size={13} /> {item.recipient_phone}
+                    </a>
+                  ) : "Chưa có"}
+                </strong>
               </div>
-            </div>
-
-            <div className="fm-split-grid">
-              <div className="fm-icon-row">
-                <Package size={17} />
-                <div>
-                  <p>Hãng vận chuyển</p>
-                  <strong>{item.carrier}</strong>
-                </div>
+              <div className="fm-customer-cell">
+                <small>Tiền thu hộ (COD)</small>
+                <strong>{formatVnd(item.cod_amount)}</strong>
               </div>
-              <div className="fm-icon-row">
-                <Clock size={17} />
-                <div>
-                  <p>Quá hạn</p>
-                  <strong className="fm-overdue">{item.overdue_hours} giờ</strong>
-                </div>
+              <div className="fm-customer-cell fm-customer-full">
+                <small>Địa chỉ giao</small>
+                <strong>{item.recipient_address || "Chưa có"}</strong>
+              </div>
+              <div className="fm-customer-cell">
+                <small>Sản phẩm</small>
+                <strong>{item.product_summary || "—"}</strong>
+              </div>
+              <div className="fm-customer-cell">
+                <small>Khối lượng / Kiện</small>
+                <strong>
+                  {item.weight_kg ? `${item.weight_kg} kg` : "—"}
+                  {item.package_count ? ` • ${item.package_count} kiện` : ""}
+                </strong>
+              </div>
+              <div className="fm-customer-cell fm-customer-full">
+                <small>Lần quét cuối</small>
+                <strong>
+                  {item.last_scan_location || "—"}
+                  {item.last_scan_note ? ` — ${item.last_scan_note}` : ""}
+                </strong>
               </div>
             </div>
           </section>
 
           <section className="fm-card">
             <h2 className="fm-section-title">
-              <MapPin size={17} />
-              Thông tin lô hàng
+              <AlertTriangle size={17} />
+              Tóm tắt tình huống
             </h2>
-            <div className="fm-meta-grid">
-              <div>
-                <p>Điểm gửi</p>
-                <strong>{item.origin}</strong>
-              </div>
-              <div>
-                <p>Điểm nhận</p>
-                <strong>{item.destination}</strong>
-              </div>
-              <div>
-                <p>Thời điểm phát hiện</p>
-                <strong>{formatDate(item.detected_at)}</strong>
-              </div>
-              <div>
-                <p>Tuyến</p>
-                <strong>
-                  {item.origin} {"->"} {item.destination}
-                </strong>
-              </div>
+            <div className="fm-story-grid">
+              <article className="fm-story-card">
+                <small>Vì sao bị gắn cờ</small>
+                <strong>{formatReason(item.reason)}</strong>
+                <p>{insight.likelyCause}</p>
+              </article>
+              <article className="fm-story-card">
+                <small>Tác động nghiệp vụ</small>
+                <strong>{insight.impact}</strong>
+                <p>{insight.escalationLabel}</p>
+              </article>
+              <article className="fm-story-card">
+                <small>Gợi ý xử lý</small>
+                <strong>{item.ai_suggestion || "Chưa có gợi ý"}</strong>
+              </article>
             </div>
-            {item.exception_type === "failed_delivery" && (
-              <div className="fm-warning-row">
-                <AlertTriangle size={14} />
-                <span>Ngoại lệ giao thất bại cần xác nhận lại với người nhận</span>
-              </div>
-            )}
           </section>
 
-          <section className="fm-ai-card">
-            <div className="fm-ai-head">
-              <h3>
-                <Sparkles size={16} />
-                Gợi ý xử lý
-              </h3>
-              {item.confidence ? (
-                <span className="fm-confidence">
-                  <TrendingUp size={14} />
-                  Độ tin cậy {(item.confidence * 100).toFixed(0)}%
-                </span>
-              ) : (
-                <span className="fm-fallback">AI không khả dụng — theo quy tắc</span>
-              )}
+          <section className="fm-card">
+            <h2 className="fm-section-title">
+              <ShieldAlert size={17} />
+              Tín hiệu và bằng chứng
+            </h2>
+            <div className="fm-evidence-list">
+              {insight.evidence.map((evidence) => (
+                <div key={evidence} className="fm-evidence-item">
+                  <span className="fm-timeline-dot" />
+                  <p>{evidence}</p>
+                </div>
+              ))}
             </div>
-            <p>{item.ai_suggestion || "Không có gợi ý AI, vui lòng xử lý theo checklist vận hành."}</p>
+          </section>
+
+          <section className="fm-card">
+            <h2 className="fm-section-title">
+              <ClipboardList size={17} />
+              Hướng dẫn xử lý đề xuất
+            </h2>
+            <div className="fm-playbook">
+              {insight.playbook.map((step) => (
+                <article key={step.label} className={`fm-playbook-step ${step.done ? "done" : ""}`}>
+                  <div className="fm-playbook-icon">{step.done ? <CheckCircle2 size={18} /> : <Clock size={18} />}</div>
+                  <div>
+                    <strong>{step.label}</strong>
+                    <p>{step.detail}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
           </section>
 
           <section className="fm-card">
             <h2 className="fm-section-title">
               <Calendar size={17} />
-              Lịch sử xử lý
+              Lịch sử thao tác
             </h2>
             <div className="fm-timeline">
               {auditEvents.length === 0 ? (
@@ -369,92 +474,89 @@ export function ExceptionDetailPage() {
 
         <aside className="fm-right-col">
           <section className="fm-card fm-actions">
-            <h3>Hành động</h3>
-            <label className="fm-field">
-              Cập nhật trạng thái
-              <select value={status} onChange={(e) => setStatus(e.target.value as ExceptionStatus)}>
-                <option value="open">Mở</option>
-                <option value="notified">Đã thông báo</option>
-                <option value="in_progress">Đang xử lý</option>
-                <option value="waiting_manager_review">Chờ quản lý xử lý</option>
-                <option value="returned_to_ops">Trả lại vận hành</option>
-                <option value="resolved">Đã xử lý</option>
-              </select>
-            </label>
+            <h3>Thao tác xử lý</h3>
 
-            <label className="fm-field">
-              Ghi chú xử lý
-              <textarea
-                rows={6}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Nhập ghi chú về quá trình xử lý..."
-              />
-            </label>
+            <div className="fm-callout">
+              <Sparkles size={16} />
+              <div>
+                <strong>Bước tiếp theo</strong>
+                <p>{insight.nextAction}</p>
+              </div>
+            </div>
 
-            {canStandardActions && (
-              <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleClaim}>
-                Nhận xử lý
-              </button>
+            {!isResolved && (
+              <div className="fm-quick-actions">
+                <div className="fm-quick-header">
+                  <strong>Liên hệ khách</strong>
+                </div>
+                <div className="fm-quick-list">
+                  <button
+                    type="button"
+                    className="fm-quick-chip fm-quick-chip-primary"
+                    disabled={saving}
+                    onClick={() => void handleCustomerNotify()}
+                  >
+                    {customerTemplateLabel(item).label}
+                  </button>
+                </div>
+                <div className="fm-quick-header" style={{ marginTop: 14 }}>
+                  <strong>Ghi nhận thao tác nội bộ</strong>
+                </div>
+                <div className="fm-quick-list">
+                  {insight.noteTemplates.map((template) => (
+                    <button
+                      key={template}
+                      type="button"
+                      className="fm-quick-chip"
+                      disabled={saving}
+                      onClick={() => logAction(template)}
+                    >
+                      {template}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
-            {canStandardActions && (
-              <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleSave}>
+            <div className="fm-action-buttons">
+              {!isResolved && (
+                <button className="btn btn-primary fm-btn" disabled={saving} onClick={handleClose}>
+                  <CheckCircle2 size={16} />
+                  Đóng case
+                </button>
+              )}
+              {isResolved && (
+                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleReopen}>
+                  <RotateCcw size={16} />
+                  Mở lại case
+                </button>
+              )}
+            </div>
+
+            <details className="fm-manual-edit">
+              <summary>Chỉnh trạng thái / note thủ công</summary>
+              <label className="fm-field">
+                Trạng thái
+                <select value={status} onChange={(e) => setStatus(e.target.value as ExceptionStatus)}>
+                  <option value="open">Mới phát hiện</option>
+                  <option value="in_progress">Đang xử lý</option>
+                  <option value="resolved">Đã đóng</option>
+                </select>
+              </label>
+              <label className="fm-field">
+                Ghi chú xử lý
+                <textarea
+                  rows={6}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Ghi chú..."
+                />
+              </label>
+              <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleSave}>
                 <Save size={16} />
-                Lưu thay đổi
+                Lưu thay đổi thủ công
               </button>
-            )}
-
-            {canTransfer && (
-              <>
-                <label className="fm-field">
-                  Chuyển người xử lý
-                  <input value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="Ví dụ: employee" />
-                </label>
-                <label className="fm-field">
-                  Nhóm xử lý
-                  <input value={assignedTeam} onChange={(e) => setAssignedTeam(e.target.value)} placeholder="ops" />
-                </label>
-                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleAssign}>
-                  Chuyển người xử lý
-                </button>
-              </>
-            )}
-
-            {canRequestSupport && (
-              <button className="btn btn-secondary fm-btn" disabled={saving} onClick={handleEscalate}>
-                <Siren size={16} />
-                Yêu cầu quản lý hỗ trợ
-              </button>
-            )}
-
-            {isManager && (
-              <>
-                <label className="fm-field">
-                  Lý do duyệt (bắt buộc)
-                  <textarea
-                    rows={4}
-                    value={managerReason}
-                    onChange={(e) => setManagerReason(e.target.value)}
-                    placeholder="Nhập lý do tiếp nhận/trả lại/phê duyệt đóng..."
-                  />
-                </label>
-                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={() => void runManagerAction("accept")}>
-                  Tiếp nhận duyệt
-                </button>
-                <button className="btn btn-secondary fm-btn" disabled={saving} onClick={() => void runManagerAction("return")}>
-                  Trả lại cho vận hành
-                </button>
-                <button className="btn btn-primary fm-btn" disabled={saving} onClick={() => void runManagerAction("approve")}>
-                  Phê duyệt đóng case
-                </button>
-              </>
-            )}
-
-            <p className="inline-message">
-              Người phụ trách hiện tại: <strong>{item.assignee || "Chưa có"}</strong>
-              {user?.username ? ` • Bạn: ${user.username}` : ""}
-            </p>
+            </details>
 
             {message && <p className="inline-message">{message}</p>}
           </section>
@@ -463,16 +565,20 @@ export function ExceptionDetailPage() {
             <h3>Thông tin nhanh</h3>
             <div className="fm-quick-grid">
               <div>
-                <p>Mã ngoại lệ</p>
+                <p>Mã case</p>
                 <code>{item.id.slice(0, 8)}</code>
               </div>
               <div>
-                <p>Loại</p>
+                <p>Loại vấn đề</p>
                 <strong>{formatExceptionType(item.exception_type)}</strong>
               </div>
               <div>
-                <p>Mức độ</p>
-                <SeverityBadge severity={item.severity} />
+                <p>Trạng thái đơn hàng</p>
+                <strong>{formatShipmentStatus(item.shipment_status)}</strong>
+              </div>
+              <div>
+                <p>Phát hiện lúc</p>
+                <strong>{formatDate(item.detected_at)}</strong>
               </div>
             </div>
           </section>

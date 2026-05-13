@@ -1,11 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-export type UserRole = "ops" | "employee" | "manager";
-
 interface AuthUser {
   username: string;
   display_name: string;
-  role: UserRole;
 }
 
 interface AuthContextValue {
@@ -23,17 +20,6 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
-}
-
-export function getAuthRole(): UserRole | null {
-  const raw = localStorage.getItem(USER_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as AuthUser;
-    return parsed.role;
-  } catch {
-    return null;
-  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

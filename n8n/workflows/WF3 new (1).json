@@ -1,0 +1,524 @@
+{
+  "name": "WF3 new",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf3-notify-v2",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "530120a3-5690-4a40-bfab-c3363443a6db",
+      "name": "WF3 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1200,
+        96
+      ],
+      "webhookId": "617359d4-de74-41ed-91e9-d164ae7ccac4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('WF3 Webhook').item.json || {};\nconst bodyFromWebhook = webhook.body && typeof webhook.body === 'object' ? webhook.body : {};\nconst bodyFromCurrent = $json.body && typeof $json.body === 'object' ? $json.body : {};\n\n// Prefer request body only (avoid mixing with headers/params metadata).\nconst payload = { ...bodyFromWebhook, ...bodyFromCurrent };\n\nconst rawExceptionId = payload.exception_id ?? payload.id ?? payload.exceptionId ?? webhook.query?.exception_id ?? webhook.params?.exception_id;\nconst exceptionId = typeof rawExceptionId === 'string' ? rawExceptionId.trim() : rawExceptionId;\nconst overdue = Number(payload.overdue_hours ?? payload.overdueHours ?? 0);\nlet severity = payload.severity;\nlet escalateToManager = Boolean(payload.escalate_to_manager);\nlet slaEscalationApplied = false;\n\nif (severity === 'HIGH' && overdue > 72) {\n  severity = 'CRITICAL';\n  escalateToManager = true;\n  slaEscalationApplied = true;\n}\nif (severity === 'MEDIUM' && overdue > 48) {\n  severity = 'HIGH';\n  slaEscalationApplied = true;\n}\n\nreturn [{\n  json: {\n    ...payload,\n    exception_id: exceptionId || null,\n    missing_exception_id: !exceptionId,\n    severity,\n    escalate_to_manager: escalateToManager,\n    overdue_hours: overdue,\n    sla_escalation_applied: slaEscalationApplied\n  }\n}];"
+      },
+      "id": "2e4ea0fe-e5c9-44c6-893f-d3f8e5f2a0f3",
+      "name": "Apply SLA Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT status, notified_at\nFROM exceptions\nWHERE id = $1\nUNION ALL\nSELECT 'open'::text AS status, NULL::timestamptz AS notified_at\nWHERE NOT EXISTS (SELECT 1 FROM exceptions WHERE id = $1)\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{[$json.exception_id]}}"
+        }
+      },
+      "id": "0d296399-efa3-4514-8cdc-d6ed0b48fd6d",
+      "name": "Get Notified Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -720,
+        96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $('Apply SLA Escalation').item.json;\nconst db = $json || {};\nconst alreadyNotified = db.status === 'notified' || Boolean(db.notified_at);\nreturn [{ json: { ...payload, is_already_notified: alreadyNotified } }];"
+      },
+      "id": "44dd69d1-a87e-4dd6-9d0c-185b5b854299",
+      "name": "Merge Status + Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.is_already_notified_normalized}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "cd4424ad-c6a3-4ee0-b2e4-929b1bb6dae2"
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "c757fee6-9784-45c8-8b3f-4da90940bc07",
+      "name": "IF Already Notified",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -32,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "55aa7be8-9100-4d19-897a-e7982ed3aac6",
+      "name": "Respond Already Notified",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://notifier:8003/notify",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "exception_id",
+              "value": "={{$json.exception_id}}"
+            },
+            {
+              "name": "exception_type",
+              "value": "={{$json.exception_type || 'manual_test'}}"
+            },
+            {
+              "name": "severity",
+              "value": "={{$json.severity}}"
+            },
+            {
+              "name": "reason",
+              "value": "={{$json.reason}}"
+            },
+            {
+              "name": "overdue_hours",
+              "value": "={{$json.overdue_hours || 0}}"
+            },
+            {
+              "name": "escalate_to_manager",
+              "value": "={{$json.escalate_to_manager || false}}"
+            },
+            {
+              "name": "carrier",
+              "value": "={{$json.carrier}}"
+            },
+            {
+              "name": "ai_suggestion",
+              "value": "={{$json.ai_suggestion || ''}}"
+            },
+            {
+              "name": "tracking_number",
+              "value": "={{$json.tracking_number || ''}}"
+            },
+            {
+              "name": "channels_sent",
+              "value": "={{$json.channels_sent || []}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fe70f9a9-0949-415d-98e0-ad6526f96df6",
+      "name": "Call Notifier /notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        208,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{$json.success}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a209d82c-6817-407f-9bb9-e82a3531e18b",
+      "name": "IF Notify Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE exceptions SET status = 'notified', notified_at = NOW(), channels_sent = $1, is_escalated = $2 WHERE id = $3;",
+        "options": {
+          "queryReplacement": "={{[$json.channels_sent, $json.is_escalated, $json.exception_id]}}"
+        }
+      },
+      "id": "00830384-af6f-4def-8d2d-b8dcc9993b1d",
+      "name": "Update Exception Notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        688,
+        128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (exception_id, action, actor, metadata)\nVALUES (\n  '{{ $(\"IF Notify Success\").item.json.exception_id || $(\"Merge Status + Payload\").item.json.exception_id }}',\n  'notified',\n  'system',\n  '{{ JSON.stringify({ channels_sent: $(\"IF Notify Success\").item.json.channels_sent || [], is_escalated: $(\"IF Notify Success\").item.json.is_escalated || false }).replace(/'/g, \"''\") }}'::jsonb\n);",
+        "options": {}
+      },
+      "id": "e1075495-027c-48a8-ab01-3728868fcb80",
+      "name": "Insert Audit Notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        928,
+        128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{$json.is_escalated}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f80a600d-50fe-40f1-9064-44151b7f9470",
+      "name": "IF Escalated",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1168,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (exception_id, action, actor, metadata)\nVALUES (\n  '{{ $(\"Merge Status + Payload\").item.json.exception_id }}',\n  'escalated',\n  'system',\n  '{{ JSON.stringify({ channels_sent: $(\"IF Notify Success\").item.json.channels_sent || [], is_escalated: true }).replace(/'/g, \"''\") }}'::jsonb\n);",
+        "options": {}
+      },
+      "id": "36207ff2-3aa0-40cf-9d5d-6a43d6ea92df",
+      "name": "Insert Audit Escalated",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1408,
+        64
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (exception_id, action, actor, metadata)\nVALUES (\n  '{{ $(\"Merge Status + Payload\").item.json.exception_id }}',\n  'error',\n  'system',\n  '{{ JSON.stringify({ reason: $json.skipped_reason || \"notify_failed\", notify_response: $json }).replace(/'/g, \"''\") }}'::jsonb\n);",
+        "options": {}
+      },
+      "id": "ba421319-4d42-4cb9-802e-3e41f9b2183c",
+      "name": "Insert Audit Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        688,
+        336
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "bUQJNqPGWsv530IN",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "b6afb716-a8f4-44dc-a845-1cbfee010a53",
+      "name": "Respond WF3",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1648,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const v = $json.is_already_notified;\nconst normalized = v === true || v === 'true' || v === 1 || v === '1';\nreturn [{ json: { ...$json, is_already_notified_normalized: normalized } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        96
+      ],
+      "id": "5181663c-c696-4a64-be39-cd3170879442",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WF3 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Apply SLA Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply SLA Escalation": {
+      "main": [
+        [
+          {
+            "node": "Get Notified Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Notified Status": {
+      "main": [
+        [
+          {
+            "node": "Merge Status + Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Status + Payload": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Already Notified": {
+      "main": [
+        [
+          {
+            "node": "Respond Already Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Notifier /notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notifier /notify": {
+      "main": [
+        [
+          {
+            "node": "IF Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Notify Success": {
+      "main": [
+        [
+          {
+            "node": "Update Exception Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Audit Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Exception Notified": {
+      "main": [
+        [
+          {
+            "node": "Insert Audit Notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Audit Notified": {
+      "main": [
+        [
+          {
+            "node": "IF Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Escalated": {
+      "main": [
+        [
+          {
+            "node": "Insert Audit Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond WF3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Audit Escalated": {
+      "main": [
+        [
+          {
+            "node": "Respond WF3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Audit Error": {
+      "main": [
+        [
+          {
+            "node": "Respond WF3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "IF Already Notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "2bb30a32-8aa2-49e3-b7d9-4314ffed57ec",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f1640d3210347b2677795f0a19ba15676844041479642c445388c5a4a858d18"
+  },
+  "id": "mHXaDAr2lbj9f5WJkiyML",
+  "tags": []
+}
