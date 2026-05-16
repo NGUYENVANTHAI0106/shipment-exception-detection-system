@@ -144,6 +144,8 @@ services:
         condition: service_started
     ports:
       - "${NGINX_HOST_PORT:-8080}:80"
+      # Tuỳ chọn: map 80 trên VPS vào nginx Docker (bỏ comment nếu không có nginx khác chiếm :80)
+      # - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
