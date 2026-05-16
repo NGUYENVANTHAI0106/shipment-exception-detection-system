@@ -1,6 +1,6 @@
 import { ArrowRight, Clock3, Filter, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -20,7 +20,7 @@ function formatDate(dateStr: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
+} 
 
 /** Bỏ ký tự vô hình hay copy từ Telegram làm UUID không khớp. */
 function normalizeSearchInput(raw: string): string {
@@ -34,6 +34,8 @@ function normalizeSearchInput(raw: string): string {
 type StatusFilter = ExceptionStatus | "active" | "all";
 
 export function ExceptionsPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [items, setItems] = useState<ExceptionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +76,13 @@ export function ExceptionsPage() {
       clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    const st = location.state as { flash?: string } | null;
+    if (!st?.flash) return;
+    setActionMessage(st.flash);
+    navigate(".", { replace: true, state: {} });
+  }, [location.state, navigate]);
 
   const filtered = useMemo(() => {
     const term = normalizeSearchInput(searchTerm);
@@ -149,6 +158,17 @@ export function ExceptionsPage() {
       <header className="v2-page-head">
         <div>
           <h1>Đơn hàng có vấn đề</h1>
+          <p className="fm-section-hint" style={{ marginTop: 6 }}>
+            Chỉ các <strong>case ngoại lệ</strong> đã được tạo (auto hoặc tay). Biết đơn «đang giao» chỉ trong{" "}
+            <Link className="v2-link" to="/shipments">
+              Tất cả vận đơn
+            </Link>
+            ; có case đang mở thì đơn xuất hiện đồng thời ở hai màn. Ghi chú vận hành ở màn&nbsp;
+            <Link className="v2-link" to="/shipments">
+              Sửa vận đơn
+            </Link>{" "}
+            cũng được hiển thị trong chi tiết case (kể cả đơn do hệ thống/mock tạo).
+          </p>
         </div>
         <div className="v2-page-head-side">
           <button className="btn btn-primary" onClick={() => void refresh()} disabled={loading}>

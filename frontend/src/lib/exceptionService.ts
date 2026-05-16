@@ -3,6 +3,12 @@ import type {
   CustomerTemplate,
   ExceptionItem,
   ExceptionStatus,
+  ManualExceptionCreatePayload,
+  ManualShipmentCreatePayload,
+  ManualShipmentCreateResult,
+  ShipmentDetail,
+  ShipmentListItem,
+  ShipmentUpdatePayload,
   Stats,
 } from "../types";
 import { getAuthToken } from "../auth";
@@ -95,5 +101,56 @@ export async function notifyCustomer(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ template }),
+  });
+}
+
+export async function createManualShipment(
+  payload: ManualShipmentCreatePayload,
+): Promise<ManualShipmentCreateResult> {
+  return apiFetch<ManualShipmentCreateResult>("/api/admin/shipments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export type ShipmentOnlyFilter = "all" | "healthy" | "has_issue";
+
+export async function listShipments(
+  opts?: { limit?: number; only?: ShipmentOnlyFilter },
+): Promise<ShipmentListItem[]> {
+  const limit = opts?.limit ?? 500;
+  const only = opts?.only ?? "all";
+  const q = new URLSearchParams({ limit: String(limit), only });
+  return apiFetch<ShipmentListItem[]>(`/api/shipments?${q.toString()}&ts=${Date.now()}`, {
+    cache: "no-store",
+  });
+}
+
+export async function getShipment(id: string): Promise<ShipmentDetail> {
+  return apiFetch<ShipmentDetail>(`/api/shipments/${id}?ts=${Date.now()}`, { cache: "no-store" });
+}
+
+export async function updateShipment(id: string, patch: ShipmentUpdatePayload): Promise<ShipmentDetail> {
+  return apiFetch<ShipmentDetail>(`/api/shipments/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteShipment(
+  id: string,
+): Promise<{ deleted: boolean; shipment_id: string; tracking_number: string }> {
+  return apiFetch(`/api/shipments/${id}`, { method: "DELETE" });
+}
+
+export async function createManualException(
+  payload: ManualExceptionCreatePayload,
+): Promise<ExceptionItem> {
+  return apiFetch<ExceptionItem>("/api/admin/exceptions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }

@@ -5,6 +5,9 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { ExceptionsPage } from "./pages/ExceptionsPage";
 import { ExceptionDetailPage } from "./pages/ExceptionDetailPage";
 import { LoginPage } from "./pages/LoginPage";
+import { NewShipmentPage } from "./pages/NewShipmentPage";
+import { ShipmentEditPage } from "./pages/ShipmentEditPage";
+import { ShipmentsPage } from "./pages/ShipmentsPage";
 
 function RequireAuth() {
   const { ready, user } = useAuth();
@@ -29,7 +32,10 @@ function App() {
         <Route element={<AppShellLayout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/shipments/:id/edit" element={<ShipmentEditPage />} />
+          <Route path="/shipments" element={<ShipmentsPage />} />
           <Route path="/exceptions" element={<ExceptionsPage />} />
+          <Route path="/exceptions/new-shipment" element={<NewShipmentPage />} />
           <Route path="/exceptions/:id" element={<ExceptionDetailPage />} />
         </Route>
       </Route>

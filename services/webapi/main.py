@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.errors import UniqueViolation
 
 JWT_SECRET = os.getenv("APP_JWT_SECRET", "dev-secret-change-me")
 ACCESS_TTL_SECONDS = int(os.getenv("APP_ACCESS_TOKEN_EXPIRE_MINUTES", "480")) * 60
@@ -39,6 +40,95 @@ class ExceptionPatchRequest(BaseModel):
     resolution_note: str | None = None
 
 
+class ShipmentCreateRequest(BaseModel):
+    """Admin tạo đơn mới vào shipments + ghi dòng lineage admin_shipment_entries."""
+
+    tracking_number: str
+    carrier: str
+    origin: str
+    destination: str
+    expected_delivery: str
+    status: str = "in_transit"
+    failed_attempts: int = 0
+    actual_delivery: str | None = None
+    recipient_name: str | None = None
+    recipient_phone: str | None = None
+    recipient_address: str | None = None
+    cod_amount: float | None = None
+    weight_kg: float | None = None
+    package_count: int | None = None
+    product_summary: str | None = None
+    last_scan_location: str | None = None
+    last_scan_note: str | None = None
+    intake_note: str | None = None
+
+
+class ShipmentUpdateRequest(BaseModel):
+    """PATCH shipments: chỉ các field được gửi (không đổi trường bỏ qua); intake_note tạo/cập nhật dòng admin_shipment_entries nếu có."""
+
+    tracking_number: str | None = None
+    carrier: str | None = None
+    origin: str | None = None
+    destination: str | None = None
+    expected_delivery: str | None = None
+    actual_delivery: str | None = None
+    status: str | None = None
+    failed_attempts: int | None = None
+    recipient_name: str | None = None
+    recipient_phone: str | None = None
+    recipient_address: str | None = None
+    cod_amount: float | None = None
+    weight_kg: float | None = None
+    package_count: int | None = None
+    product_summary: str | None = None
+    last_scan_location: str | None = None
+    last_scan_note: str | None = None
+    intake_note: str | None = None
+
+
+class ManualExceptionCreateRequest(BaseModel):
+    """Thêm một case vào exceptions (không cần detector/mock-data)."""
+
+    shipment_id: str
+    exception_type: str
+    reason: str
+    severity_hint: str = "MEDIUM"
+    overdue_hours: float = 0
+
+
+def _parse_iso_ts(value: str | None) -> datetime | None:
+    if value is None or value == "":
+        return None
+    raw = value.strip().replace("Z", "+00:00")
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _get_or_create_admin_account_id(username: str, display_name: str) -> str:
+    """Khớp JWT sub với bảng admin_accounts (ưu tiên seed username admin)."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM admin_accounts WHERE username = %s",
+            (username,),
+        )
+        row = cur.fetchone()
+        if row:
+            return str(row["id"])
+        cur.execute(
+            """
+            INSERT INTO admin_accounts (username, display_name)
+            VALUES (%s, %s)
+            RETURNING id
+            """,
+            (username, display_name),
+        )
+        new_id = str(cur.fetchone()["id"])
+        conn.commit()
+        return new_id
+
+
 # Single role system - all logged-in users have the same permissions.
 USERS = {
     "admin": {"password": "admin123", "display_name": "Admin"},
@@ -53,6 +143,8 @@ LEGACY_USERS = {
 
 # Simplified state machine: open -> in_progress -> resolved (resolved can be reopened).
 ALLOWED_STATUSES = {"open", "in_progress", "resolved"}
+ALLOWED_EXCEPTION_TYPES_ADMIN = {"delay", "failed_delivery", "address_issue", "stuck"}
+ALLOWED_SEVERITY_HINTS_ADMIN = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 VALID_TRANSITIONS = {
     "open": {"in_progress", "resolved"},
     "in_progress": {"resolved", "open"},
@@ -88,6 +180,67 @@ def _calculate_deadline(detected_at: datetime | None, severity: str) -> datetime
     return base + timedelta(hours=_sla_hours_by_severity(severity))
 
 
+def _ensure_auto_failed_delivery_case_from_shipment_snapshot(cur, shipment_id: str) -> None:
+    """Khi nhập tay ghi đủ 2 lần giao thất bại, tự thêm một case để vào backlog xử lý (nếu chưa có case mở)."""
+    cur.execute(
+        """
+        SELECT s.failed_attempts, s.tracking_number, m.intake_note
+        FROM shipments s
+        LEFT JOIN admin_shipment_entries m ON m.shipment_id = s.id
+        WHERE s.id = %s::uuid
+        """,
+        (shipment_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return
+    failed_attempts = int(row["failed_attempts"] or 0)
+    if failed_attempts < 2:
+        return
+    cur.execute(
+        """
+        SELECT COUNT(*)::int AS c FROM exceptions
+        WHERE shipment_id = %s::uuid AND status <> 'resolved'
+        """,
+        (shipment_id,),
+    )
+    if cur.fetchone()["c"] > 0:
+        return
+
+    tn = row["tracking_number"] or shipment_id
+    note = row.get("intake_note")
+    reason_parts = [
+        f"[Tự động – nhập đơn tay] Đơn có {failed_attempts} lần giao thất bại; mã vận đơn {tn}."
+    ]
+    if isinstance(note, str) and note.strip():
+        reason_parts.append(f"Ghi chu: {note.strip()}")
+    reason = " ".join(reason_parts)
+    max_len = 1800
+    if len(reason) > max_len:
+        reason = reason[: max_len - 3] + "..."
+
+    sev_hint = "HIGH" if failed_attempts >= 3 else "MEDIUM"
+    deadline = _calculate_deadline(datetime.now(timezone.utc), sev_hint)
+    overdue_hours = 0.0
+    cur.execute(
+        """
+        INSERT INTO exceptions (
+          shipment_id, exception_type, reason, severity_hint, overdue_hours,
+          status, detected_at, deadline_at, sla_breached
+        )
+        VALUES (%s::uuid, %s, %s, %s, %s, 'open', NOW(), %s, FALSE)
+        """,
+        (
+            shipment_id,
+            "failed_delivery",
+            reason,
+            sev_hint,
+            overdue_hours,
+            deadline,
+        ),
+    )
+
+
 def _connect():
     return psycopg.connect(DB_DSN, row_factory=dict_row)
 
@@ -118,10 +271,65 @@ def _ensure_schema() -> None:
             WHERE status IN ('notified','investigating','waiting_manager_review','returned_to_ops')
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_accounts (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              username TEXT NOT NULL UNIQUE,
+              display_name TEXT NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_shipment_entries (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              admin_account_id UUID NOT NULL REFERENCES admin_accounts(id) ON DELETE RESTRICT,
+              shipment_id UUID NOT NULL UNIQUE REFERENCES shipments(id) ON DELETE CASCADE,
+              intake_note TEXT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_admin_shipment_entries_admin
+              ON admin_shipment_entries(admin_account_id)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_admin_shipment_entries_created_at
+              ON admin_shipment_entries(created_at DESC)
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO admin_accounts (username, display_name)
+            VALUES ('admin', 'Administrator')
+            ON CONFLICT (username) DO NOTHING
+            """
+        )
+        cur.execute(
+            "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS manual_intake BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        cur.execute(
+            """
+            UPDATE shipments s
+            SET manual_intake = TRUE
+            FROM admin_shipment_entries e
+            WHERE e.shipment_id = s.id
+              AND s.manual_intake = FALSE
+              AND ABS(EXTRACT(EPOCH FROM (e.created_at - s.created_at))) <= 120
+            """
+        )
         conn.commit()
 
 
 def _serialize_exception(row: dict) -> dict:
+    raw_in = row.get("shipment_intake_note")
+    intake_trimmed = raw_in.strip() if isinstance(raw_in, str) and raw_in.strip() else None
     return {
         "id": str(row["id"]),
         "shipment_id": str(row["shipment_id"]),
@@ -159,6 +367,7 @@ def _serialize_exception(row: dict) -> dict:
         "product_summary": row.get("product_summary"),
         "last_scan_location": row.get("last_scan_location"),
         "last_scan_note": row.get("last_scan_note"),
+        "intake_note": intake_trimmed,
     }
 
 
@@ -210,8 +419,18 @@ _EXCEPTION_SELECT_COLUMNS = """
   e.assignee,
   e.assigned_at,
   e.deadline_at,
-  e.sla_breached
+  e.sla_breached,
+  ae.intake_note AS shipment_intake_note
 """
+
+
+def _exception_from_join_clause() -> str:
+    """JOIN giữa exception, shipment và (tối đa một) dòng ghi chú vận hành intake."""
+    return """
+            FROM exceptions e
+            JOIN shipments s ON s.id = e.shipment_id
+            LEFT JOIN admin_shipment_entries ae ON ae.shipment_id = s.id
+    """
 
 
 def _list_exceptions() -> list[dict]:
@@ -219,8 +438,7 @@ def _list_exceptions() -> list[dict]:
         cur.execute(
             f"""
             SELECT {_EXCEPTION_SELECT_COLUMNS}
-            FROM exceptions e
-            JOIN shipments s ON s.id = e.shipment_id
+            {_exception_from_join_clause()}
             ORDER BY
               CASE WHEN e.status = 'resolved' THEN 1 ELSE 0 END,
               e.sla_breached DESC,
@@ -237,8 +455,7 @@ def _get_exception(exception_id: str) -> dict:
         cur.execute(
             f"""
             SELECT {_EXCEPTION_SELECT_COLUMNS}
-            FROM exceptions e
-            JOIN shipments s ON s.id = e.shipment_id
+            {_exception_from_join_clause()}
             WHERE e.id = %s
             """,
             (exception_id,),
@@ -400,6 +617,593 @@ def login(payload: LoginRequest) -> dict:
 def me(request: Request) -> dict:
     user = request.state.user
     return {"username": user["sub"], "display_name": user.get("display_name", "")}
+
+
+def _serialize_shipment_list_row(row: dict) -> dict:
+    def iso(v: datetime | None) -> str | None:
+        return v.isoformat() if v else None
+
+    oe = int(row.get("open_exception_count") or 0)
+    tid = row.get("primary_open_exception_id")
+    return {
+        "id": str(row["id"]),
+        "tracking_number": row["tracking_number"],
+        "carrier": row["carrier"],
+        "origin": row["origin"],
+        "destination": row["destination"],
+        "status": row["status"],
+        "failed_attempts": int(row["failed_attempts"] or 0),
+        "expected_delivery": iso(row.get("expected_delivery")),
+        "actual_delivery": iso(row.get("actual_delivery")),
+        "last_updated": iso(row.get("last_updated")),
+        "created_at": iso(row.get("created_at")),
+        "open_exception_count": oe,
+        "total_exception_count": int(row.get("total_exception_count") or 0),
+        "primary_open_exception_id": str(tid) if tid else None,
+        "manual_entry": bool(row.get("manual_entry")),
+    }
+
+
+@app.get("/api/shipments")
+def list_shipments(request: Request, limit: int = 200, only: str = "all") -> list[dict]:
+    """Danh sách vận đơn (shipments); có đếm exception chưa đóng để phân biệt đơn bình thường vs đang có case."""
+    lim = max(1, min(limit, 500))
+    filt = (only or "all").strip().lower()
+    if filt not in ("all", "healthy", "has_issue"):
+        raise HTTPException(status_code=400, detail="invalid_only_filter")
+
+    where = ""
+    if filt == "healthy":
+        where = """
+          WHERE NOT EXISTS (
+            SELECT 1 FROM exceptions e
+            WHERE e.shipment_id = s.id AND e.status <> 'resolved'
+          )
+        """
+    elif filt == "has_issue":
+        where = """
+          WHERE EXISTS (
+            SELECT 1 FROM exceptions e
+            WHERE e.shipment_id = s.id AND e.status <> 'resolved'
+          )
+        """
+
+    sql = f"""
+        SELECT
+          s.id,
+          s.tracking_number,
+          s.carrier,
+          s.origin,
+          s.destination,
+          s.status,
+          s.failed_attempts,
+          s.expected_delivery,
+          s.actual_delivery,
+          s.last_updated,
+          s.created_at,
+          (SELECT COUNT(*)::int FROM exceptions e WHERE e.shipment_id = s.id AND e.status <> 'resolved') AS open_exception_count,
+          (SELECT COUNT(*)::int FROM exceptions e WHERE e.shipment_id = s.id) AS total_exception_count,
+          (SELECT e.id FROM exceptions e WHERE e.shipment_id = s.id AND e.status <> 'resolved'
+             ORDER BY e.detected_at DESC NULLS LAST LIMIT 1) AS primary_open_exception_id,
+          COALESCE(s.manual_intake, FALSE) AS manual_entry
+        FROM shipments s
+        {where}
+        ORDER BY s.last_updated DESC NULLS LAST
+        LIMIT %s
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (lim,))
+        rows = cur.fetchall()
+    return [_serialize_shipment_list_row(r) for r in rows]
+
+
+def _patch_shipments_table(cur, shipment_id: str, payload: ShipmentUpdateRequest) -> bool:
+    """UPDATE shipments columns (không intake_note). True nếu có thực thi UPDATE."""
+    sets: list[str] = []
+    vals: list = []
+    if payload.tracking_number is not None:
+        sets.append("tracking_number = %s")
+        vals.append(payload.tracking_number.strip())
+    if payload.carrier is not None:
+        sets.append("carrier = %s")
+        vals.append(payload.carrier.strip())
+    if payload.origin is not None:
+        sets.append("origin = %s")
+        vals.append(payload.origin.strip())
+    if payload.destination is not None:
+        sets.append("destination = %s")
+        vals.append(payload.destination.strip())
+    if payload.expected_delivery is not None:
+        ed = _parse_iso_ts(payload.expected_delivery)
+        if ed is None:
+            raise HTTPException(status_code=400, detail="invalid_expected_delivery")
+        sets.append("expected_delivery = %s")
+        vals.append(ed)
+    if payload.actual_delivery is not None:
+        ad = _parse_iso_ts(payload.actual_delivery)
+        sets.append("actual_delivery = %s")
+        vals.append(ad)
+    if payload.status is not None:
+        sets.append("status = %s")
+        vals.append(payload.status.strip())
+    if payload.failed_attempts is not None:
+        sets.append("failed_attempts = %s")
+        vals.append(payload.failed_attempts)
+    if payload.recipient_name is not None:
+        sets.append("recipient_name = %s")
+        vals.append(payload.recipient_name)
+    if payload.recipient_phone is not None:
+        sets.append("recipient_phone = %s")
+        vals.append(payload.recipient_phone)
+    if payload.recipient_address is not None:
+        sets.append("recipient_address = %s")
+        vals.append(payload.recipient_address)
+    if payload.cod_amount is not None:
+        sets.append("cod_amount = %s")
+        vals.append(payload.cod_amount)
+    if payload.weight_kg is not None:
+        sets.append("weight_kg = %s")
+        vals.append(payload.weight_kg)
+    if payload.package_count is not None:
+        sets.append("package_count = %s")
+        vals.append(payload.package_count)
+    if payload.product_summary is not None:
+        sets.append("product_summary = %s")
+        vals.append(payload.product_summary)
+    if payload.last_scan_location is not None:
+        sets.append("last_scan_location = %s")
+        vals.append(payload.last_scan_location)
+    if payload.last_scan_note is not None:
+        sets.append("last_scan_note = %s")
+        vals.append(payload.last_scan_note)
+    if not sets:
+        return False
+    sets.append("last_updated = NOW()")
+    vals.append(shipment_id)
+    try:
+        cur.execute(f"UPDATE shipments SET {', '.join(sets)} WHERE id = %s", vals)
+    except UniqueViolation as exc:
+        raise HTTPException(status_code=409, detail="duplicate_tracking_number_or_entry") from exc
+    return True
+
+
+def _upsert_intake_note(cur, shipment_id: str, admin_account_id: str, intake_note: str | None) -> None:
+    """Tạo hoặc cập nhật ghi chú intake (chuỗi rỗng → NULL). Khác None nghĩa là có chỉnh sửa lineage."""
+    note = intake_note.strip() if intake_note else None
+    cur.execute(
+        "SELECT id FROM admin_shipment_entries WHERE shipment_id = %s",
+        (shipment_id,),
+    )
+    if cur.fetchone():
+        cur.execute(
+            """
+            UPDATE admin_shipment_entries
+            SET intake_note = %s
+            WHERE shipment_id = %s
+            """,
+            (note, shipment_id),
+        )
+        return
+    cur.execute(
+        """
+        INSERT INTO admin_shipment_entries (admin_account_id, shipment_id, intake_note)
+        VALUES (%s::uuid, %s::uuid, %s)
+        """,
+        (admin_account_id, shipment_id, note),
+    )
+
+
+def _serialize_shipment_detail_row(row: dict) -> dict:
+    def iso(v: datetime | None) -> str | None:
+        return v.isoformat() if v else None
+
+    oe = int(row.get("open_exception_count") or 0)
+    tid = row.get("primary_open_exception_id")
+    entry_id = row.get("admin_entry_id")
+    return {
+        "id": str(row["id"]),
+        "tracking_number": row["tracking_number"],
+        "carrier": row["carrier"],
+        "origin": row["origin"],
+        "destination": row["destination"],
+        "status": row["status"],
+        "failed_attempts": int(row["failed_attempts"] or 0),
+        "expected_delivery": iso(row.get("expected_delivery")),
+        "actual_delivery": iso(row.get("actual_delivery")),
+        "last_updated": iso(row.get("last_updated")),
+        "created_at": iso(row.get("created_at")),
+        "recipient_name": row.get("recipient_name"),
+        "recipient_phone": row.get("recipient_phone"),
+        "recipient_address": row.get("recipient_address"),
+        "cod_amount": float(row["cod_amount"]) if row.get("cod_amount") is not None else None,
+        "weight_kg": float(row["weight_kg"]) if row.get("weight_kg") is not None else None,
+        "package_count": int(row["package_count"]) if row.get("package_count") is not None else None,
+        "product_summary": row.get("product_summary"),
+        "last_scan_location": row.get("last_scan_location"),
+        "last_scan_note": row.get("last_scan_note"),
+        "open_exception_count": oe,
+        "total_exception_count": int(row.get("total_exception_count") or 0),
+        "primary_open_exception_id": str(tid) if tid else None,
+        "manual_entry": bool(row.get("manual_intake", False)),
+        "submission_id": str(entry_id) if entry_id else None,
+        "intake_note": row.get("intake_note"),
+        "admin_entry_created_at": iso(row.get("admin_entry_created_at")),
+    }
+
+
+SHIPMENT_DETAIL_SQL = """
+SELECT
+  s.id,
+  s.tracking_number,
+  s.carrier,
+  s.origin,
+  s.destination,
+  s.status,
+  s.failed_attempts,
+  s.expected_delivery,
+  s.actual_delivery,
+  s.last_updated,
+  s.created_at,
+  s.manual_intake,
+  s.recipient_name,
+  s.recipient_phone,
+  s.recipient_address,
+  s.cod_amount,
+  s.weight_kg,
+  s.package_count,
+  s.product_summary,
+  s.last_scan_location,
+  s.last_scan_note,
+  e.id AS admin_entry_id,
+  e.intake_note,
+  e.created_at AS admin_entry_created_at,
+  (SELECT COUNT(*)::int FROM exceptions ex WHERE ex.shipment_id = s.id AND ex.status <> 'resolved') AS open_exception_count,
+  (SELECT COUNT(*)::int FROM exceptions ex WHERE ex.shipment_id = s.id) AS total_exception_count,
+  (SELECT ex.id FROM exceptions ex WHERE ex.shipment_id = s.id AND ex.status <> 'resolved'
+     ORDER BY ex.detected_at DESC NULLS LAST LIMIT 1) AS primary_open_exception_id
+FROM shipments s
+LEFT JOIN admin_shipment_entries e ON e.shipment_id = s.id
+WHERE s.id = %s
+"""
+
+
+def _fetch_shipment_detail(shipment_id: str) -> dict:
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(SHIPMENT_DETAIL_SQL, (shipment_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="shipment_not_found")
+    return _serialize_shipment_detail_row(row)
+
+
+@app.get("/api/shipments/{shipment_id}")
+def get_shipment(shipment_id: str, request: Request) -> dict:
+    return _fetch_shipment_detail(shipment_id)
+
+
+@app.patch("/api/shipments/{shipment_id}")
+def patch_shipment(shipment_id: str, payload: ShipmentUpdateRequest, request: Request) -> dict:
+    """Sửa bất kỳ vận đơn nào; intake_note Upsert lineage khi được gửi."""
+    username = request.state.user["sub"]
+    display_name = request.state.user.get("display_name") or username
+    admin_id = _get_or_create_admin_account_id(username, display_name)
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM shipments WHERE id = %s", (shipment_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="shipment_not_found")
+
+        touched_s = _patch_shipments_table(cur, shipment_id, payload)
+        touched_i = payload.intake_note is not None
+        if touched_i:
+            _upsert_intake_note(cur, shipment_id, admin_id, payload.intake_note)
+
+        if not touched_s and not touched_i:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail="no_fields_to_update")
+
+        _ensure_auto_failed_delivery_case_from_shipment_snapshot(cur, shipment_id)
+        conn.commit()
+
+    return _fetch_shipment_detail(shipment_id)
+
+
+@app.delete("/api/shipments/{shipment_id}")
+def delete_shipment(shipment_id: str, request: Request) -> dict:
+    """Xóa vận đơn (mọi nguồn); CASCADE exceptions/audit/logs theo FK."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM shipments WHERE id = %s RETURNING id, tracking_number",
+            (shipment_id,),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="shipment_not_found")
+    return {
+        "deleted": True,
+        "shipment_id": str(row["id"]),
+        "tracking_number": row["tracking_number"],
+    }
+
+
+@app.post("/api/admin/exceptions")
+def create_exception_admin(payload: ManualExceptionCreateRequest, request: Request) -> dict:
+    """Mở case ngoại lệ thủ công trên một shipment (vận hành không cần detector)."""
+    et = payload.exception_type.strip()
+    if et not in ALLOWED_EXCEPTION_TYPES_ADMIN:
+        raise HTTPException(status_code=400, detail="invalid_exception_type")
+    sh = payload.severity_hint.strip().upper()
+    if sh not in ALLOWED_SEVERITY_HINTS_ADMIN:
+        raise HTTPException(status_code=400, detail="invalid_severity_hint")
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason_required")
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM shipments WHERE id = %s", (payload.shipment_id.strip(),))
+        ship = cur.fetchone()
+        if not ship:
+            raise HTTPException(status_code=404, detail="shipment_not_found")
+
+        detected = datetime.now(timezone.utc)
+        deadline = _calculate_deadline(detected, sh)
+
+        cur.execute(
+            """
+            INSERT INTO exceptions (
+              shipment_id, exception_type, reason, severity_hint, overdue_hours,
+              status, detected_at, deadline_at, sla_breached
+            )
+            VALUES (%s::uuid, %s, %s, %s, %s, 'open', NOW(), %s, FALSE)
+            RETURNING id
+            """,
+            (
+                payload.shipment_id.strip(),
+                et,
+                reason,
+                sh,
+                payload.overdue_hours,
+                deadline,
+            ),
+        )
+        exc_id = str(cur.fetchone()["id"])
+        conn.commit()
+
+    return _get_exception(exc_id)
+
+
+@app.post("/api/admin/shipments")
+def create_shipment_admin(payload: ShipmentCreateRequest, request: Request) -> dict:
+    """Tạo bản ghi shipments và ghi nhận admin nào đã nhập (admin_shipment_entries)."""
+    user = request.state.user
+    username = user["sub"]
+    display_name = user.get("display_name") or username
+    admin_id = _get_or_create_admin_account_id(username, display_name)
+    expected_delivery = _parse_iso_ts(payload.expected_delivery)
+    if expected_delivery is None:
+        raise HTTPException(status_code=400, detail="invalid_expected_delivery")
+    actual_delivery = _parse_iso_ts(payload.actual_delivery)
+    tn = payload.tracking_number.strip()
+    if not tn:
+        raise HTTPException(status_code=400, detail="tracking_number_required")
+    note = payload.intake_note.strip() if payload.intake_note else None
+
+    insert_shipment_sql = """
+        INSERT INTO shipments (
+          tracking_number, carrier, origin, destination,
+          expected_delivery, actual_delivery, status, failed_attempts, last_updated,
+          recipient_name, recipient_phone, recipient_address,
+          cod_amount, weight_kg, package_count, product_summary,
+          last_scan_location, last_scan_note,
+          manual_intake
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(),
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                TRUE)
+        RETURNING id
+    """
+    vals = (
+        tn,
+        payload.carrier.strip(),
+        payload.origin.strip(),
+        payload.destination.strip(),
+        expected_delivery,
+        actual_delivery,
+        payload.status.strip(),
+        payload.failed_attempts,
+        payload.recipient_name,
+        payload.recipient_phone,
+        payload.recipient_address,
+        payload.cod_amount,
+        payload.weight_kg,
+        payload.package_count,
+        payload.product_summary,
+        payload.last_scan_location,
+        payload.last_scan_note,
+    )
+
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(insert_shipment_sql, vals)
+            shipment_id = str(cur.fetchone()["id"])
+            cur.execute(
+                """
+                INSERT INTO admin_shipment_entries (admin_account_id, shipment_id, intake_note)
+                VALUES (%s::uuid, %s::uuid, %s)
+                RETURNING id
+                """,
+                (admin_id, shipment_id, note),
+            )
+            entry_id = str(cur.fetchone()["id"])
+            _ensure_auto_failed_delivery_case_from_shipment_snapshot(cur, shipment_id)
+            conn.commit()
+    except UniqueViolation as exc:
+        raise HTTPException(status_code=409, detail="duplicate_tracking_number_or_entry") from exc
+
+    return {
+        "shipment_id": shipment_id,
+        "submission_id": entry_id,
+        "tracking_number": tn,
+        "created_by_username": username,
+    }
+
+
+def _serialize_manual_shipment_row(row: dict) -> dict:
+    def iso(v: datetime | None) -> str | None:
+        return v.isoformat() if v else None
+
+    return {
+        "submission_id": str(row["submission_id"]),
+        "shipment_id": str(row["shipment_id"]),
+        "entry_created_at": iso(row.get("entry_created_at")),
+        "intake_note": row.get("intake_note"),
+        "admin_username": row.get("admin_username"),
+        "admin_display_name": row.get("admin_display_name"),
+        "tracking_number": row["tracking_number"],
+        "carrier": row["carrier"],
+        "origin": row["origin"],
+        "destination": row["destination"],
+        "expected_delivery": iso(row.get("expected_delivery")),
+        "actual_delivery": iso(row.get("actual_delivery")),
+        "shipment_status": row.get("shipment_status"),
+        "failed_attempts": int(row["failed_attempts"] or 0),
+        "shipment_last_updated": iso(row.get("shipment_last_updated")),
+        "shipment_created_at": iso(row.get("shipment_created_at")),
+        "recipient_name": row.get("recipient_name"),
+        "recipient_phone": row.get("recipient_phone"),
+        "recipient_address": row.get("recipient_address"),
+        "cod_amount": float(row["cod_amount"]) if row.get("cod_amount") is not None else None,
+        "weight_kg": float(row["weight_kg"]) if row.get("weight_kg") is not None else None,
+        "package_count": int(row["package_count"]) if row.get("package_count") is not None else None,
+        "product_summary": row.get("product_summary"),
+        "last_scan_location": row.get("last_scan_location"),
+        "last_scan_note": row.get("last_scan_note"),
+    }
+
+
+_MANUAL_SHIPMENT_SELECT = """
+  e.id AS submission_id,
+  e.created_at AS entry_created_at,
+  e.intake_note,
+  aa.username AS admin_username,
+  aa.display_name AS admin_display_name,
+  s.id AS shipment_id,
+  s.tracking_number,
+  s.carrier,
+  s.origin,
+  s.destination,
+  s.expected_delivery,
+  s.actual_delivery,
+  s.status AS shipment_status,
+  s.failed_attempts,
+  s.last_updated AS shipment_last_updated,
+  s.created_at AS shipment_created_at,
+  s.recipient_name,
+  s.recipient_phone,
+  s.recipient_address,
+  s.cod_amount,
+  s.weight_kg,
+  s.package_count,
+  s.product_summary,
+  s.last_scan_location,
+  s.last_scan_note
+"""
+
+
+@app.get("/api/admin/shipments/manual")
+def list_manual_shipments(request: Request, limit: int = 50) -> list[dict]:
+    lim = max(1, min(limit, 200))
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT {_MANUAL_SHIPMENT_SELECT}
+            FROM admin_shipment_entries e
+            JOIN admin_accounts aa ON aa.id = e.admin_account_id
+            JOIN shipments s ON s.id = e.shipment_id
+            ORDER BY e.created_at DESC
+            LIMIT %s
+            """,
+            (lim,),
+        )
+        rows = cur.fetchall()
+    return [_serialize_manual_shipment_row(r) for r in rows]
+
+
+@app.get("/api/admin/shipments/manual/{shipment_id}")
+def get_manual_shipment(shipment_id: str, request: Request) -> dict:
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT {_MANUAL_SHIPMENT_SELECT}
+            FROM admin_shipment_entries e
+            JOIN admin_accounts aa ON aa.id = e.admin_account_id
+            JOIN shipments s ON s.id = e.shipment_id
+            WHERE s.id = %s
+            """,
+            (shipment_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="manual_shipment_not_found")
+    return _serialize_manual_shipment_row(row)
+
+
+@app.patch("/api/admin/shipments/manual/{shipment_id}")
+def update_manual_shipment(
+    shipment_id: str, payload: ShipmentUpdateRequest, request: Request
+) -> dict:
+    username = request.state.user["sub"]
+    display_name = request.state.user.get("display_name") or username
+    admin_id = _get_or_create_admin_account_id(username, display_name)
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM admin_shipment_entries WHERE shipment_id = %s",
+            (shipment_id,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="manual_shipment_not_found")
+
+        touched_s = _patch_shipments_table(cur, shipment_id, payload)
+        touched_i = payload.intake_note is not None
+        if touched_i:
+            _upsert_intake_note(cur, shipment_id, admin_id, payload.intake_note)
+
+        if not touched_s and not touched_i:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail="no_fields_to_update")
+
+        _ensure_auto_failed_delivery_case_from_shipment_snapshot(cur, shipment_id)
+        conn.commit()
+
+    return get_manual_shipment(shipment_id, request)
+
+
+@app.delete("/api/admin/shipments/manual/{shipment_id}")
+def delete_manual_shipment(shipment_id: str, request: Request) -> dict:
+    """Xóa đơn khỏi shipments (có dòng admin_shipment_entries); cascade xóa entry + exceptions liên quan."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM shipments s
+            WHERE s.id = %s
+              AND EXISTS (
+                SELECT 1 FROM admin_shipment_entries e WHERE e.shipment_id = s.id
+              )
+            RETURNING s.id, s.tracking_number
+            """,
+            (shipment_id,),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="manual_shipment_not_found")
+    return {
+        "deleted": True,
+        "shipment_id": str(row["id"]),
+        "tracking_number": row["tracking_number"],
+    }
 
 
 @app.get("/api/exceptions")

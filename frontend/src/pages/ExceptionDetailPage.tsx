@@ -389,6 +389,15 @@ export function ExceptionDetailPage() {
                   {item.last_scan_note ? ` — ${item.last_scan_note}` : ""}
                 </strong>
               </div>
+              {item.intake_note?.trim() ? (
+                <div className="fm-customer-cell fm-customer-full">
+                  <small>Ghi chú vận hành (từ Sửa vận đơn)</small>
+                  <strong>{item.intake_note.trim()}</strong>
+                  <small style={{ display: "block", marginTop: 6, color: "#64748b" }}>
+                    Đơn «Hệ thống» chỉnh ở Tất cả vận đơn → Sửa — nội dung hiển thị cả tại đây.
+                  </small>
+                </div>
+              ) : null}
             </div>
           </section>
 

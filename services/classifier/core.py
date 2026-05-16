@@ -15,7 +15,7 @@ DEFAULT_ACTION = "Kiểm tra thủ công và phối hợp với hãng vận chuy
 def classify_by_rules(exception_data: dict) -> dict:
     """Phân loại exception bằng quy tắc cố định, không gọi AI."""
     exception_type = exception_data["exception_type"]
-    severity_hint = exception_data.get("severity_hint", "MEDIUM")
+    severity_hint = exception_data.get("severity_hint", "M  EDIUM")
     if severity_hint not in VALID_SEVERITIES:
         severity_hint = "MEDIUM"
 

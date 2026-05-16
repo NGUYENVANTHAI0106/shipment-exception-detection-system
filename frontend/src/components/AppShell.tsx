@@ -1,4 +1,4 @@
-import { LayoutDashboard, LogOut, Package, User } from "lucide-react";
+import { LayoutDashboard, LogOut, Package, PackagePlus, Truck, User } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth";
 
@@ -8,10 +8,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { to: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
+    { to: "/shipments", label: "Tất cả vận đơn", icon: Truck },
+    { to: "/exceptions/new-shipment", label: "Thêm đơn", icon: PackagePlus },
     { to: "/exceptions", label: "Đơn có vấn đề", icon: Package },
   ];
 
-  const isActive = (to: string) => location.pathname === to || location.pathname.startsWith(`${to}/`);
+  const isActive = (to: string) => {
+    if (to === "/exceptions") {
+      return (
+        location.pathname === "/exceptions" ||
+        (location.pathname.startsWith("/exceptions/") && location.pathname.split("/")[2] !== "new-shipment")
+      );
+    }
+    return location.pathname === to || location.pathname.startsWith(`${to}/`);
+  };
 
   return (
     <div className="app-shell">
